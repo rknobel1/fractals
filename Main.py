@@ -342,7 +342,7 @@ def _annotate_layout_diff(prev_layout, curr_layout):
 # ----------------------------
 
 class TileViewer(tk.Toplevel):
-    def __init__(self, master, title, snapshots, mode_name):
+    def __init__(self, master, title, snapshots, mode_name, step_session=None):
         super().__init__(master)
         self.title(title)
         self.geometry("1600x950")
@@ -352,6 +352,9 @@ class TileViewer(tk.Toplevel):
         self.snapshots = snapshots
         self.snapshot_index = 0
         self.mode_name = mode_name
+        self.step_session = step_session
+        self.stream_done = step_session is None
+        self._stream_poll_job = None
         self.canvas_items = {}
         self.item_to_rect = {}
         self.label_items = []
@@ -380,6 +383,8 @@ class TileViewer(tk.Toplevel):
 
         self._build_ui()
         self._render_current_snapshot(reset_view=True)
+        if self.step_session is not None:
+            self.after(40, self._poll_step_session)
 
     def _build_ui(self):
         self.columnconfigure(0, weight=3)
@@ -838,6 +843,57 @@ class TileViewer(tk.Toplevel):
         if redraw:
             self._render_current_snapshot(reset_view=False)
 
+    def _append_stream_snapshot(self, snapshot):
+        prev_layout = self.snapshots[-1]["raw_layout"] if self.snapshots else None
+        annotated_layout, diff = _annotate_layout_diff(prev_layout, snapshot["layout"])
+        summary = snapshot["summary"]
+        reason = snapshot.get("reason") or "Tile state changed"
+        idx = len(self.snapshots) + 1
+        counts = snapshot.get("rule_counts") or {}
+        self.snapshots.append(
+            {
+                "title": f"Step {idx}",
+                "layout": annotated_layout,
+                "raw_layout": snapshot["layout"],
+                "summary": summary,
+                "diff": diff,
+                "explanation": (
+                    f"{snapshot['title']}\n"
+                    f"{reason}\n"
+                    f"Current tiles: {summary['tile_count']}\n"
+                    f"Accumulated rules in this run: {counts.get('states', 0)} states, {counts.get('transitions', 0)} transitions, {counts.get('affinities', 0)} affinities.\n"
+                    f"Added this step: {diff['added']}\n"
+                    f"Changed this step: {diff['changed']}\n"
+                    f"Removed this step: {diff['removed']}"
+                ),
+            }
+        )
+
+    def _poll_step_session(self):
+        if self.step_session is None:
+            return
+
+        advanced = False
+        for event in self.step_session.get_pending_events():
+            etype = event.get("type")
+            if etype == "snapshot":
+                self._append_stream_snapshot(event["snapshot"])
+                advanced = True
+            elif etype == "done":
+                self.stream_done = True
+            elif etype == "error":
+                self.stream_done = True
+                tk.messagebox.showerror("Simulation error", str(event["error"]))
+
+        if advanced and self.snapshot_index >= len(self.snapshots) - 2:
+            self.snapshot_index = len(self.snapshots) - 1
+            self._render_current_snapshot(reset_view=True)
+        else:
+            self._update_nav_buttons()
+
+        if not self.stream_done:
+            self._stream_poll_job = self.after(40, self._poll_step_session)
+
     def prev_snapshot(self):
         if self.snapshot_index > 0:
             self.snapshot_index -= 1
@@ -847,14 +903,28 @@ class TileViewer(tk.Toplevel):
         if self.snapshot_index < len(self.snapshots) - 1:
             self.snapshot_index += 1
             self._render_current_snapshot(reset_view=True)
+            return
 
-    def _update_nav_state(self):
+        if self.step_session is not None and not self.stream_done:
+            self.step_session.resume_one_step()
+            self._update_nav_buttons()
+
+    def _update_nav_buttons(self):
         if len(self.snapshots) <= 1:
             self.prev_btn.config(state="disabled")
             self.next_btn.config(state="disabled")
             return
+
         self.prev_btn.config(state=("normal" if self.snapshot_index > 0 else "disabled"))
-        self.next_btn.config(state=("normal" if self.snapshot_index < len(self.snapshots) - 1 else "disabled"))
+
+        if self.step_session is not None and not self.stream_done:
+            can_go_forward = True
+        else:
+            can_go_forward = self.snapshot_index < len(self.snapshots) - 1
+        self.next_btn.config(state=("normal" if can_go_forward else "disabled"))
+
+    def _update_nav_state(self):
+        self._update_nav_buttons()
 
 
 # ----------------------------
@@ -918,62 +988,58 @@ class MainApp(tk.Tk):
                 TileViewer(self, "Simulation Result", snapshots, mode_name="Pure")
             else:
                 seed_for_run = sim.clone_seed(base_seed)
-                raw_snapshots = []
+                max_stage, actual_stage = sim.compute_auto_stage_limit(len(self.tile_positions))
+                session = sim.StepSimulationSession(seed_for_run, max_stage).start()
+                initial_snapshots = []
+                for event in session.get_pending_events():
+                    if event["type"] == "snapshot":
+                        initial_snapshots.append(event["snapshot"])
+                    elif event["type"] == "error":
+                        raise event["error"]
 
-                def capture_snapshot(seed_tile, label):
-                    layout = sim.extract_tile_layout(seed_tile)
-                    summary = sim.summarize_layout(layout)
-                    raw_snapshots.append(
+                if not initial_snapshots:
+                    layout = sim.extract_tile_layout(seed_for_run)
+                    initial_snapshots.append(
                         {
-                            "title": label,
+                            "title": "Initial seed",
                             "layout": layout,
-                            "summary": summary,
+                            "summary": sim.summarize_layout(layout),
+                            "reason": f"Initial state. Auto-running up to stage {max_stage} (actual stage value {actual_stage}).",
+                            "rule_counts": {"states": 0, "transitions": 0, "affinities": 0},
                         }
                     )
 
-                seed_tile, states, transitions, affinities, _ = sim.run_simulation_clean(
-                    seed_for_run,
-                    self.stages,
-                    snapshot_cb=capture_snapshot,
-                )
-
-                if not raw_snapshots:
-                    layout = sim.extract_tile_layout(seed_tile)
-                    summary = sim.summarize_layout(layout)
-                    raw_snapshots.append(
+                viewer_snapshots = []
+                for snap in initial_snapshots:
+                    annotated_layout, diff = _annotate_layout_diff(viewer_snapshots[-1]["raw_layout"] if viewer_snapshots else None, snap["layout"])
+                    counts = snap.get("rule_counts") or {}
+                    viewer_snapshots.append(
                         {
-                            "title": "Final assembly",
-                            "layout": layout,
-                            "summary": summary,
-                        }
-                    )
-
-                snapshots = []
-                prev_layout = None
-                total_steps = len(raw_snapshots)
-
-                for idx, snap in enumerate(raw_snapshots, start=1):
-                    annotated_layout, diff = _annotate_layout_diff(prev_layout, snap["layout"])
-                    summary = snap["summary"]
-                    snapshots.append(
-                        {
-                            "title": f"Step {idx} of {total_steps}",
+                            "title": f"Step {len(viewer_snapshots) + 1}",
                             "layout": annotated_layout,
-                            "summary": summary,
+                            "raw_layout": snap["layout"],
+                            "summary": snap["summary"],
                             "diff": diff,
                             "explanation": (
                                 f"{snap['title']}\n"
-                                f"Current tiles: {summary['tile_count']}\n"
-                                f"Accumulated rules in this run: {len(states)} states, {len(transitions)} transitions, {len(affinities)} affinities.\n"
+                                f"{snap.get('reason') or 'Tile state changed'}\n"
+                                f"Auto-running up to stage {max_stage} (actual stage value {actual_stage}).\n"
+                                f"Current tiles: {snap['summary']['tile_count']}\n"
+                                f"Accumulated rules in this run: {counts.get('states', 0)} states, {counts.get('transitions', 0)} transitions, {counts.get('affinities', 0)} affinities.\n"
                                 f"Added this step: {diff['added']}\n"
                                 f"Changed this step: {diff['changed']}\n"
                                 f"Removed this step: {diff['removed']}"
                             ),
                         }
                     )
-                    prev_layout = snap["layout"]
 
-                TileViewer(self, "Step Viewer", snapshots, mode_name="Step")
+                TileViewer(
+                    self,
+                    f"Step Viewer (auto max stage {max_stage})",
+                    viewer_snapshots,
+                    mode_name="Step",
+                    step_session=session,
+                )
         except Exception as exc:
             tk.messagebox.showerror("Simulation error", str(exc))
 
@@ -1113,8 +1179,8 @@ class SelectStagesFrame(tk.Frame):
         card = tk.Frame(self, bg="#ffffff", bd=1, relief="solid")
         card.pack(fill="both", expand=True, padx=16, pady=16)
 
-        tk.Label(card, text="Choose the number of stages", font=("Segoe UI", 18, "bold"), bg="#ffffff").pack(anchor="w", padx=18, pady=(18, 4))
-        tk.Label(card, text="Higher stages can grow very quickly. Step mode currently shows one snapshot per stage.", font=("Segoe UI", 10), bg="#ffffff", fg="#475569").pack(anchor="w", padx=18, pady=(0, 18))
+        tk.Label(card, text="Choose the simulation depth", font=("Segoe UI", 18, "bold"), bg="#ffffff").pack(anchor="w", padx=18, pady=(18, 4))
+        tk.Label(card, text="Higher stages can grow very quickly. Step mode now records from the initial seed and advances one tile-state change at a time.", font=("Segoe UI", 10), bg="#ffffff", fg="#475569").pack(anchor="w", padx=18, pady=(0, 18))
 
         self.dropdown_holder = tk.Frame(card, bg="#ffffff")
         self.dropdown_holder.pack(anchor="w", padx=18, pady=(0, 16))

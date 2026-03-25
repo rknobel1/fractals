@@ -12,71 +12,191 @@ affinities = []
 # To store the tiles where hard resetting will first occur
 hard_reset_tiles = []
 
+_TILE_CHANGE_HOOK = None
+_OBSERVED_LIST_ATTRS = {"caps", "next", "previous", "new_n", "new_p"}
+
+
+def set_tile_change_hook(hook):
+    global _TILE_CHANGE_HOOK
+    _TILE_CHANGE_HOOK = hook
+
+
+def _tracking_enabled():
+    return _TILE_CHANGE_HOOK is not None
+
+
+def _emit_tile_change(tile, attr_name):
+    if _TILE_CHANGE_HOOK is not None:
+        _TILE_CHANGE_HOOK(tile, attr_name)
+
+
+class ObservableList(list):
+    def __init__(self, iterable=(), owner=None, attr_name=None):
+        super().__init__(iterable)
+        self._owner = owner
+        self._attr_name = attr_name
+
+    def _notify(self):
+        if self._owner is not None and self._attr_name is not None:
+            _emit_tile_change(self._owner, self._attr_name)
+
+    def append(self, value):
+        super().append(value)
+        self._notify()
+
+    def extend(self, values):
+        super().extend(values)
+        self._notify()
+
+    def insert(self, index, value):
+        super().insert(index, value)
+        self._notify()
+
+    def remove(self, value):
+        super().remove(value)
+        self._notify()
+
+    def pop(self, index=-1):
+        value = super().pop(index)
+        self._notify()
+        return value
+
+    def clear(self):
+        super().clear()
+        self._notify()
+
+    def __setitem__(self, index, value):
+        super().__setitem__(index, value)
+        self._notify()
+
+    def __delitem__(self, index):
+        super().__delitem__(index)
+        self._notify()
+
+
+def _wrap_observable_list(owner, attr_name, value):
+    if value is None or not _tracking_enabled():
+        return value
+    if isinstance(value, ObservableList):
+        wrapped = ObservableList(value, owner=owner, attr_name=attr_name)
+        return wrapped
+    if isinstance(value, list):
+        return ObservableList(value, owner=owner, attr_name=attr_name)
+    return value
+
+
+def instrument_tile_graph(seed_tile):
+    """Wrap mutable list fields for an existing tile graph when step tracking is enabled."""
+    if seed_tile is None or not _tracking_enabled():
+        return
+
+    stack = deque([seed_tile])
+    visited = set()
+    while stack:
+        tile = stack.pop()
+        if tile is None or id(tile) in visited:
+            continue
+        visited.add(id(tile))
+
+        object.__setattr__(tile, '_suspend_notifications', True)
+        try:
+            for attr_name in _OBSERVED_LIST_ATTRS:
+                value = getattr(tile, attr_name, None)
+                if isinstance(value, list) and not isinstance(value, ObservableList):
+                    object.__setattr__(tile, attr_name, ObservableList(value, owner=tile, attr_name=attr_name))
+        finally:
+            object.__setattr__(tile, '_suspend_notifications', False)
+
+        for neighbor in ('tile_to_N', 'tile_to_E', 'tile_to_W', 'tile_to_S'):
+            stack.append(getattr(tile, neighbor, None))
+
+
 class Tile():
 
     def __init__(self, p, n):
+        object.__setattr__(self, "_suspend_notifications", True)
+
         self.previous = p
         self.next = n
 
-    # What direction to copy
-    copy_direction = None
+        # What direction to copy
+        self.copy_direction = None
 
-    # Caps
-    caps = []
+        # Caps
+        self.caps = []
 
-    # Local tile information (and neighbors)
-    status = None
-    tile_to_N = None
-    tile_to_E = None
-    tile_to_W = None
-    tile_to_S = None
+        # Local tile information (and neighbors)
+        self.status = None
+        self.tile_to_N = None
+        self.tile_to_E = None
+        self.tile_to_W = None
+        self.tile_to_S = None
 
-    # If tile becomes new key tile or not
-    new_kt_N = False
-    new_kt_E = False
-    new_kt_W = False
-    new_kt_S = False
+        # If tile becomes new key tile or not
+        self.new_kt_N = False
+        self.new_kt_E = False
+        self.new_kt_W = False
+        self.new_kt_S = False
 
-    # Breadcrumb trail
-    N = None
-    E = None
-    W = None
-    S = None
+        # Breadcrumb trail
+        self.N = None
+        self.E = None
+        self.W = None
+        self.S = None
 
-    # Holds information from breadcrumb trail (what the state was before)
-    temp = None
+        # Holds information from breadcrumb trail (what the state was before)
+        self.temp = None
 
-    # What is being transferred
-    transfer = None
+        # What is being transferred
+        self.transfer = None
 
-    # If tile is a seed 
-    original_seed = False
-    pseudo_seed = False
+        # If tile is a seed
+        self.original_seed = False
+        self.pseudo_seed = False
 
-    # If tile is on edge of sub-assembly
-    wall = False
+        # If tile is on edge of sub-assembly
+        self.wall = False
 
-    # Direction to key tile
-    key_tile_N = None
-    key_tile_E = None
-    key_tile_W = None
-    key_tile_S = None
+        # Direction to key tile
+        self.key_tile_N = None
+        self.key_tile_E = None
+        self.key_tile_W = None
+        self.key_tile_S = None
 
-    # Has assembly been copied for tile
-    copied = False
+        # Has assembly been copied for tile
+        self.copied = False
 
-    # Is tile terminal
-    terminal = False
+        # Is tile terminal
+        self.terminal = False
 
-    # For seeds, number of times subassembly has been copied
-    num_times_copied = 0
+        # For seeds, number of times subassembly has been copied
+        self.num_times_copied = 0
 
-    # The new previous and next for tile
-    new_p = None
-    new_n = None
+        # The new previous and next for tile
+        self.new_p = None
+        self.new_n = None
 
-    # If first tile copied
-    first_tile = False
+        # If first tile copied
+        self.first_tile = False
+
+        object.__setattr__(self, "_suspend_notifications", False)
+
+    def __setattr__(self, name, value):
+        # Fast path: when step tracking is disabled, behave like a normal object.
+        if not _tracking_enabled():
+            object.__setattr__(self, name, value)
+            return
+
+        if name in _OBSERVED_LIST_ATTRS:
+            value = _wrap_observable_list(self, name, value)
+
+        object.__setattr__(self, name, value)
+
+        if name.startswith("_"):
+            return
+
+        if not getattr(self, "_suspend_notifications", False):
+            _emit_tile_change(self, name)
 
 # RETURNS: opp(d) i.e if N -> S
 def opp(d):
