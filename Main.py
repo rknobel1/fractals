@@ -1179,11 +1179,22 @@ class SelectStagesFrame(tk.Frame):
         card = tk.Frame(self, bg="#ffffff", bd=1, relief="solid")
         card.pack(fill="both", expand=True, padx=16, pady=16)
 
-        tk.Label(card, text="Choose the simulation depth", font=("Segoe UI", 18, "bold"), bg="#ffffff").pack(anchor="w", padx=18, pady=(18, 4))
-        tk.Label(card, text="Higher stages can grow very quickly. Step mode now records from the initial seed and advances one tile-state change at a time.", font=("Segoe UI", 10), bg="#ffffff", fg="#475569").pack(anchor="w", padx=18, pady=(0, 18))
+        self.title_label = tk.Label(card, text="Choose the simulation depth", font=("Segoe UI", 18, "bold"), bg="#ffffff")
+        self.title_label.pack(anchor="w", padx=18, pady=(18, 4))
+
+        self.subtitle_label = tk.Label(
+            card,
+            text="Higher stages can grow very quickly. Step mode now records from the initial seed and advances one tile-state change at a time.",
+            font=("Segoe UI", 10),
+            bg="#ffffff",
+            fg="#475569",
+            justify="left",
+            wraplength=760,
+        )
+        self.subtitle_label.pack(anchor="w", padx=18, pady=(0, 18))
 
         self.dropdown_holder = tk.Frame(card, bg="#ffffff")
-        self.dropdown_holder.pack(anchor="w", padx=18, pady=(0, 16))
+        self.dropdown_holder.pack(anchor="w", padx=18, pady=(0, 16), fill="x")
 
         controls = tk.Frame(card, bg="#ffffff")
         controls.pack(fill="x", padx=18, pady=(0, 18))
@@ -1193,6 +1204,34 @@ class SelectStagesFrame(tk.Frame):
     def refresh(self):
         for child in self.dropdown_holder.winfo_children():
             child.destroy()
+
+        if self.controller.run_mode.get() == "step":
+            self.title_label.config(text="Step mode")
+            self.subtitle_label.config(
+                text=(
+                    "Step mode no longer uses a user-selected stage count. "
+                    "It begins from the initial seed and keeps advancing until the next tile-state change, "
+                    "using an automatically computed safety limit behind the scenes."
+                )
+            )
+            tk.Label(
+                self.dropdown_holder,
+                text=(
+                    "No stage selection is needed here. Press Run to open the step viewer and stream snapshots on demand."
+                ),
+                font=("Segoe UI", 10),
+                bg="#ffffff",
+                fg="#334155",
+                justify="left",
+                wraplength=760,
+            ).pack(anchor="w")
+            self.stage_var.set("1")
+            return
+
+        self.title_label.config(text="Choose the simulation depth")
+        self.subtitle_label.config(
+            text="Higher stages can grow very quickly. Step mode now records from the initial seed and advances one tile-state change at a time."
+        )
 
         options = []
         num_tiles = max(1, len(self.controller.tile_positions))
@@ -1212,7 +1251,10 @@ class SelectStagesFrame(tk.Frame):
         tk.OptionMenu(self.dropdown_holder, self.stage_var, *options).pack(anchor="w")
 
     def run(self):
-        self.controller.stages = int(self.stage_var.get().split(' ')[0])
+        if self.controller.run_mode.get() == "pure":
+            self.controller.stages = int(self.stage_var.get().split(' ')[0])
+        else:
+            self.controller.stages = 1
         self.controller.finish()
 
 
