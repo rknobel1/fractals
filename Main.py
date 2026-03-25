@@ -382,7 +382,7 @@ class TileViewer(tk.Toplevel):
         self._current_snapshot_id = None
 
         self._build_ui()
-        self._render_current_snapshot(reset_view=False)
+        self._render_current_snapshot(reset_view=True)
         if self.step_session is not None:
             self.after(40, self._poll_step_session)
 
@@ -538,26 +538,38 @@ class TileViewer(tk.Toplevel):
         )
         legend.grid(row=2, column=0, sticky="ew", padx=8, pady=8)
 
+    def _yellow_check_for_tile(self, item):
+        if item.get("status") in {"M", "W"}:
+            return True
+
+        breadcrumbs = item.get("breadcrumbs")
+
+        if isinstance(breadcrumbs, dict):
+            for v in breadcrumbs.values():
+                if v in {"M", "W"}:
+                    return True
+
+        return False
+
     def _color_for_tile(self, item):
+        status = item.get("status")
+
+        if self._yellow_check_for_tile(item):
+            return "#facc15"
+
         if item.get("original_seed"):
             return "#000000"  
         if item.get("pseudo_seed"):
-            return "#374151"  
-
-        if item.get("wall"):
-            return "#c2410c"  
-
-        status = item.get("status")
+            return "#374151"    
 
         if status == "C":
             return "#60a5fa" 
         if status == "R":
             return "#1e3a8a"  
-        if status in {"M", "W"}:
-            return "#facc15" 
+        
         if status == "P":
             return "#ef4444"  
-        if status == "Y":
+        if status == "F":
             return "#22c55e"  
 
         if item.get("terminal"):
