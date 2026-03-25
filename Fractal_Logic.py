@@ -1,5 +1,4 @@
 from collections import deque
-import matplotlib.pyplot as plt
 import copy
 
 # To store the tiles where hard resetting will first occur
