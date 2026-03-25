@@ -382,7 +382,7 @@ class TileViewer(tk.Toplevel):
         self._current_snapshot_id = None
 
         self._build_ui()
-        self._render_current_snapshot(reset_view=True)
+        self._render_current_snapshot(reset_view=False)
         if self.step_session is not None:
             self.after(40, self._poll_step_session)
 
@@ -900,7 +900,7 @@ class TileViewer(tk.Toplevel):
 
         if advanced and self.snapshot_index >= len(self.snapshots) - 2:
             self.snapshot_index = len(self.snapshots) - 1
-            self._render_current_snapshot(reset_view=True)
+            self._render_current_snapshot(reset_view=False)
         else:
             self._update_nav_buttons()
 
@@ -910,12 +910,12 @@ class TileViewer(tk.Toplevel):
     def prev_snapshot(self):
         if self.snapshot_index > 0:
             self.snapshot_index -= 1
-            self._render_current_snapshot(reset_view=True)
+            self._render_current_snapshot(reset_view=False)
 
     def next_snapshot(self):
         if self.snapshot_index < len(self.snapshots) - 1:
             self.snapshot_index += 1
-            self._render_current_snapshot(reset_view=True)
+            self._render_current_snapshot(reset_view=False)
             return
 
         if self.step_session is not None and not self.stream_done:
