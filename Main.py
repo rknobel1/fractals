@@ -399,28 +399,30 @@ class TileViewer(tk.Toplevel):
 
         header = tk.Frame(self, bg="#ffffff", bd=1, relief="solid")
         header.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=12, pady=(12, 8))
-        header.columnconfigure(1, weight=1)
+        header.columnconfigure(0, weight=1)
+
+        left_info = tk.Frame(header, bg="#ffffff")
+        left_info.grid(row=0, column=0, padx=14, pady=12, sticky="w")
 
         self.title_label = tk.Label(
-            header,
+            left_info,
             text="Simulation Viewer",
             font=("Segoe UI", 16, "bold"),
             bg="#ffffff",
             anchor="w",
         )
-        self.title_label.grid(row=0, column=0, padx=14, pady=12, sticky="w")
+        self.title_label.pack(side="left")
 
         self.summary_label = tk.Label(
-            header,
+            left_info,
             text="",
             font=("Segoe UI", 10),
             bg="#ffffff",
             fg="#334155",
             anchor="w",
             justify="left",
-            wraplength=700,
         )
-        self.summary_label.grid(row=0, column=1, padx=8, pady=12, sticky="w")
+        self.summary_label.pack(side="left", padx=(24, 0), pady=(2, 0))
 
         controls = tk.Frame(header, bg="#ffffff")
         controls.grid(row=0, column=2, padx=12, pady=8, sticky="e")
@@ -634,14 +636,10 @@ class TileViewer(tk.Toplevel):
     def _refresh_header_and_details(self, snapshot):
         summary = snapshot["summary"]
         title_text = snapshot["title"]
-        status_summary = ", ".join(f"{k}: {v}" for k, v in sorted(summary["status_counts"].items())) or "None"
         self.title_label.config(text=title_text)
         self.summary_label.config(
             text=(
-                f"Tiles: {summary['tile_count']}    "
-                f"Bounds: x[{summary['bounds'][0]}, {summary['bounds'][1]}], "
-                f"y[{summary['bounds'][2]}, {summary['bounds'][3]}]\n"
-                f"Statuses: {status_summary}"
+                f"Tiles: {summary['tile_count']}"
             )
         )
         self._set_detail(snapshot["explanation"])
