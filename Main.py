@@ -381,10 +381,16 @@ class TileViewer(tk.Toplevel):
         self._labels_visible = True
         self._current_snapshot_id = None
 
+        self.is_playing = False
+        self._play_job = None
+        self.play_speed_var = tk.DoubleVar(value=2.0) 
+
         self._build_ui()
         self._render_current_snapshot(reset_view=True)
         if self.step_session is not None:
-            self.after(40, self._poll_step_session)
+            self._stream_poll_job = self.after(40, self._poll_step_session)
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self):
         self.columnconfigure(0, weight=3)
@@ -421,10 +427,40 @@ class TileViewer(tk.Toplevel):
 
         self.prev_btn = tk.Button(controls, text="◀ Prev", command=self.prev_snapshot, width=10)
         self.prev_btn.grid(row=0, column=0, padx=4)
+
         self.next_btn = tk.Button(controls, text="Next ▶", command=self.next_snapshot, width=10)
         self.next_btn.grid(row=0, column=1, padx=4)
+
         fit_btn = tk.Button(controls, text="Fit View", command=self.fit_view, width=10)
         fit_btn.grid(row=0, column=2, padx=4)
+
+        self.play_btn = tk.Button(
+            controls,
+            text="▶ Play",
+            command=self.toggle_playback,
+            width=10,
+            state=("normal" if self.step_session is not None else "disabled"),
+        )
+        self.play_btn.grid(row=0, column=3, padx=4)
+
+        tk.Label(
+            controls,
+            text="Speed",
+            bg="#ffffff",
+            font=("Segoe UI", 9),
+        ).grid(row=0, column=4, padx=(10, 4))
+
+        self.speed_spin = tk.Spinbox(
+            controls,
+            from_=0.25,
+            to=20.0,
+            increment=0.25,
+            textvariable=self.play_speed_var,
+            width=6,
+            format="%.2f",
+        )
+        self.speed_spin.grid(row=0, column=5, padx=4)
+        self.speed_spin.configure(state=("normal" if self.step_session is not None else "disabled"))
 
         viewport_frame = tk.Frame(self, bg="#f4f6fb")
         viewport_frame.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=(0, 12))
@@ -906,8 +942,11 @@ class TileViewer(tk.Toplevel):
                 advanced = True
             elif etype == "done":
                 self.stream_done = True
+                if self.is_playing and self.snapshot_index >= len(self.snapshots) - 1:
+                    self.stop_playback()
             elif etype == "error":
                 self.stream_done = True
+                self.stop_playback()
                 tk.messagebox.showerror("Simulation error", str(event["error"]))
 
         if advanced and self.snapshot_index >= len(self.snapshots) - 2:
@@ -920,11 +959,79 @@ class TileViewer(tk.Toplevel):
             self._stream_poll_job = self.after(40, self._poll_step_session)
 
     def prev_snapshot(self):
+        if self.is_playing:
+            self.stop_playback()
+
         if self.snapshot_index > 0:
             self.snapshot_index -= 1
             self._render_current_snapshot(reset_view=False)
 
+    def toggle_playback(self):
+        if self.step_session is None:
+            return
+
+        if self.is_playing:
+            self.stop_playback()
+        else:
+            self.start_playback()
+
+
+    def start_playback(self):
+        if self.step_session is None or self.is_playing:
+            return
+
+        self.is_playing = True
+        self.play_btn.config(text="⏸ Pause")
+        self._schedule_next_play_step()
+
+
+    def stop_playback(self):
+        self.is_playing = False
+        if hasattr(self, "play_btn"):
+            self.play_btn.config(text="▶ Play")
+        if self._play_job is not None:
+            self.after_cancel(self._play_job)
+            self._play_job = None
+
+
+    def _schedule_next_play_step(self):
+        if not self.is_playing:
+            return
+
+        try:
+            speed = float(self.play_speed_var.get())
+        except (tk.TclError, ValueError):
+            speed = 2.0
+
+        speed = max(0.25, speed)
+        delay_ms = max(1, int(1000 / speed))
+
+        self._play_job = self.after(delay_ms, self._playback_tick)
+
+
+    def _playback_tick(self):
+        self._play_job = None
+
+        if not self.is_playing:
+            return
+
+        if self.snapshot_index < len(self.snapshots) - 1:
+            self.snapshot_index += 1
+            self._render_current_snapshot(reset_view=False)
+            self._schedule_next_play_step()
+            return
+
+        if self.step_session is not None and not self.stream_done:
+            self.step_session.resume_one_step()
+            self._schedule_next_play_step()
+            return
+
+        self.stop_playback()
+
     def next_snapshot(self):
+        if self.is_playing:
+            self.stop_playback()
+
         if self.snapshot_index < len(self.snapshots) - 1:
             self.snapshot_index += 1
             self._render_current_snapshot(reset_view=False)
@@ -950,6 +1057,18 @@ class TileViewer(tk.Toplevel):
 
     def _update_nav_state(self):
         self._update_nav_buttons()
+
+    def _on_close(self):
+        self.stop_playback()
+
+        if self._stream_poll_job is not None:
+            try:
+                self.after_cancel(self._stream_poll_job)
+            except Exception:
+                pass
+            self._stream_poll_job = None
+
+        self.destroy()
 
 
 # ----------------------------
