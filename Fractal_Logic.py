@@ -237,50 +237,6 @@ def is_assembly_finished(tile):
     
     return True
 
-# Plot assembly onto graph (each tile is a mark)
-def plot_graph(seed_tile): 
-    x, y = [], []
-    stack = deque()
-    stack.append([seed_tile, 0, 0])
-    num_tiles = 0
-
-    print("PRINTING -----------------------")
-
-    while len(stack) > 0:
-        cur_tile = stack.pop()
-
-        # Debug
-        # print("Printing:", cur_tile[0].next, cur_tile[0].previous, cur_tile[0].N, cur_tile[0].E, cur_tile[0].W, cur_tile[0].S, "Keytiles:", cur_tile[0].key_tile_N, cur_tile[0].key_tile_E, cur_tile[0].key_tile_W, cur_tile[0].key_tile_S, cur_tile[0].copy_direction)
-        # time.sleep(1)
-        x.append(cur_tile[1])
-        y.append(cur_tile[2])
-
-        if cur_tile[0] == None: continue
-        num_tiles += 1
-        if cur_tile[0].next == None:
-            continue
-
-        for neighbor in cur_tile[0].next:
-            if (neighbor == "N"):
-                stack.append([cur_tile[0].tile_to_N, cur_tile[1], cur_tile[2]+1])
-            if (neighbor == "E"):
-                stack.append([cur_tile[0].tile_to_E, cur_tile[1]+1, cur_tile[2]])
-            if (neighbor == "W"):
-                stack.append([cur_tile[0].tile_to_W, cur_tile[1]-1, cur_tile[2]])
-            if (neighbor == "S"):
-                stack.append([cur_tile[0].tile_to_S, cur_tile[1], cur_tile[2]-1])
-
-    if (max(x) - min(x)) > (max(y) - min(y)): l, r = min(x)-1, max(x) + 1
-    else: l, r = min(x)-1, max(x) + 1
-
-    print("Number of tiles: ", num_tiles)
-    plt.xticks([])
-    plt.yticks([])
-    plt.plot(x, y, "x")
-    plt.title('Result')
-    plt.show()
-    return 
-
 def copy_direction_update_tiles(cur_tile, direction):
     c = 0
     if cur_tile.next != None: c += len(cur_tile.next)
@@ -1018,7 +974,6 @@ def copy_tile(tile, d, ps):
                 prev_tile.caps.append(opp(breadcrumb_direction))
                 tile.caps = []
 
-            # print(tile.next, tile.previous, tile.caps)
             if len(tile.caps) == num_dirs(tile) and tile.key_tile_S == None and retrieve_tile(tile, breadcrumb_direction).copy_direction == d:
 
                 # Find pseudo seed
@@ -2852,7 +2807,6 @@ def copy_assembly(tile, d):
     starting_tile.first_tile = True
     while not is_assembly_finished(starting_tile):
         # copy tile
-        # print("------------------- copying tile: ", tile.next, tile.previous)
         is_pseudo_seed = copy_tile(tile, d, pseudo_seed)
 
         if is_pseudo_seed != None: 
@@ -2944,15 +2898,10 @@ def copy_assembly(tile, d):
             tile.N = 'Y'
             
         else: 
-            # print("Broke:", tile.next, tile.previous)
             break
-
-
-        # print('new tile to copy: ', tile.next, tile.previous)
 
     r_tile = None
     # Need to find pseudo seed to copy in new direction: 
-    # print("Checking: ", tile.next, tile.previous, starting_tile.next, starting_tile.previous)
     if tile == starting_tile:
         tile.copy_direction = '?'
         t = [tile]
@@ -3033,10 +2982,6 @@ def copy_assembly(tile, d):
                 ct.key_tile_W = '*'
                 ct.key_tile_S = '*'
                 ct.copy_direction = 'r'
-
-    # reset_assembly(starting_tile)
-    # if returned_pseudo_seed != None:
-    #     reset_assembly(returned_pseudo_seed)
 
     return returned_pseudo_seed
 
