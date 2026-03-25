@@ -285,25 +285,49 @@ def create_seed(tile_positions, origin_tile_cords):
 # ----------------------------
 # Result viewer
 # ----------------------------
+
 class TileViewer(tk.Toplevel):
     def __init__(self, master, title, snapshots, mode_name):
         super().__init__(master)
         self.title(title)
-        self.geometry("1500x900")
-        self.minsize(1200, 700)
+        self.geometry("1600x950")
+        self.minsize(1250, 760)
         self.configure(bg="#f4f6fb")
 
         self.snapshots = snapshots
         self.snapshot_index = len(snapshots) - 1
         self.mode_name = mode_name
         self.canvas_items = {}
+        self.item_to_rect = {}
+        self.label_items = []
         self.selected_rect = None
 
+        self.base_tile_size = VIEW_TILE_SIZE
+        self.min_zoom = 0.08
+        self.max_zoom = 4.0
+        self.zoom = 1.0
+        self.offset_x = 0.0
+        self.offset_y = 0.0
+        self.view_padding = 48
+        self.current_layout_bounds = None
+        self.last_fit_size = None
+        self._suspend_fit_on_resize = False
+        self.dragging = False
+        self.drag_start = None
+        self.drag_origin = None
+
+        self.world_origin_x = 0.0
+        self.world_origin_y = 0.0
+        self.current_tile_px = self.base_tile_size
+        self.label_visibility_threshold = 18
+        self._labels_visible = True
+        self._current_snapshot_id = None
+
         self._build_ui()
-        self._render_current_snapshot()
+        self._render_current_snapshot(reset_view=True)
 
     def _build_ui(self):
-        self.columnconfigure(0, weight=1)
+        self.columnconfigure(0, weight=3)
         self.columnconfigure(1, weight=1)
         self.rowconfigure(1, weight=1)
 
@@ -351,22 +375,34 @@ class TileViewer(tk.Toplevel):
             viewport_frame,
             bg="#edf2f7",
             highlightthickness=0,
-            xscrollincrement=20,
-            yscrollincrement=20,
         )
         self.canvas.grid(row=0, column=0, sticky="nsew")
 
-        x_scroll = tk.Scrollbar(viewport_frame, orient="horizontal", command=self.canvas.xview)
-        x_scroll.grid(row=1, column=0, sticky="ew")
-        y_scroll = tk.Scrollbar(viewport_frame, orient="vertical", command=self.canvas.yview)
-        y_scroll.grid(row=0, column=1, sticky="ns")
-        self.canvas.configure(xscrollcommand=x_scroll.set, yscrollcommand=y_scroll.set)
-
-        self.canvas.bind("<Button-1>", self._on_canvas_click)
+        self.canvas.bind("<ButtonPress-1>", self._on_canvas_press)
+        self.canvas.bind("<B1-Motion>", self._on_canvas_drag)
+        self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
         self.canvas.bind("<MouseWheel>", self._on_mousewheel)
         self.canvas.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
+        self.canvas.bind("<Button-4>", lambda event: self._zoom_at(event.x, event.y, 1.1))
+        self.canvas.bind("<Button-5>", lambda event: self._zoom_at(event.x, event.y, 1 / 1.1))
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+        self.canvas.focus_set()
 
-        sidebar = tk.Frame(self, bg="#ffffff", bd=1, relief="solid", width=420)
+        self.bind("<KeyPress>", self._on_keypress)
+        self.bind("<Left>", self._on_keypress)
+        self.bind("<Right>", self._on_keypress)
+        self.bind("<Up>", self._on_keypress)
+        self.bind("<Down>", self._on_keypress)
+        self.bind("<w>", self._on_keypress)
+        self.bind("<a>", self._on_keypress)
+        self.bind("<s>", self._on_keypress)
+        self.bind("<d>", self._on_keypress)
+        self.bind("<W>", self._on_keypress)
+        self.bind("<A>", self._on_keypress)
+        self.bind("<S>", self._on_keypress)
+        self.bind("<D>", self._on_keypress)
+
+        sidebar = tk.Frame(self, bg="#ffffff", bd=1, relief="solid", width=340)
         sidebar.grid(row=1, column=1, sticky="nsew", padx=0, pady=0)
         sidebar.grid_propagate(False)
         sidebar.rowconfigure(1, weight=1)
@@ -405,7 +441,15 @@ class TileViewer(tk.Toplevel):
         detail_scroll = tk.Scrollbar(detail_frame, orient="vertical", command=self.detail_text.yview)
         detail_scroll.grid(row=0, column=1, sticky="ns")
         self.detail_text.configure(yscrollcommand=detail_scroll.set)
-        self.detail_text.insert("1.0", "Click a tile to inspect it.\n")
+        self.detail_text.insert(
+            "1.0",
+            "Click a tile to inspect it.\n\n"
+            "Controls\n"
+            "• Mouse wheel: zoom in/out\n"
+            "• Click + drag: pan the view\n"
+            "• WASD / Arrow keys: pan the view\n"
+            "• Fit View button: center and resize to fit\n",
+        )
         self.detail_text.config(state="disabled")
 
         legend = tk.Label(
@@ -442,60 +486,34 @@ class TileViewer(tk.Toplevel):
             return "#cbd5e1"
         return "#94a3b8"
 
-    def _render_current_snapshot(self):
-        snapshot = self.snapshots[self.snapshot_index]
-        layout = snapshot["layout"]
-        summary = snapshot["summary"]
+    def _layout_dimensions(self):
+        if not self.current_layout_bounds:
+            return (0, 0)
+        min_x, max_x, min_y, max_y = self.current_layout_bounds
+        width_cells = max_x - min_x + 1
+        height_cells = max_y - min_y + 1
+        return width_cells, height_cells
 
-        self.canvas.delete("all")
-        self.canvas_items.clear()
-        self.selected_rect = None
-
-        if not layout:
+    def _set_view_from_state(self):
+        if not self.current_layout_bounds:
             return
+        min_x, _max_x, _min_y, max_y = self.current_layout_bounds
+        tile_px = self.base_tile_size * self.zoom
+        self.current_tile_px = tile_px
+        self.world_origin_x = self.offset_x + self.view_padding - min_x * tile_px
+        self.world_origin_y = self.offset_y + self.view_padding + max_y * tile_px
 
-        xs = [item["x"] for item in layout]
-        ys = [item["y"] for item in layout]
-        min_x, max_x = min(xs), max(xs)
-        min_y, max_y = min(ys), max(ys)
+    def _world_rect_for_item(self, item):
+        tile_px = self.current_tile_px
+        x0 = self.world_origin_x + item["x"] * tile_px
+        y0 = self.world_origin_y - item["y"] * tile_px
+        inset = min(max(tile_px * 0.16, 2), 10)
+        x1 = x0 + tile_px - inset
+        y1 = y0 + tile_px - inset
+        return x0, y0, x1, y1, tile_px
 
-        margin = 80
-        width = (max_x - min_x + 1) * VIEW_TILE_SIZE + margin * 2
-        height = (max_y - min_y + 1) * VIEW_TILE_SIZE + margin * 2
-        self.canvas.configure(scrollregion=(0, 0, width, height))
-
-        for item in layout:
-            gx = item["x"] - min_x
-            gy = max_y - item["y"]
-            x0 = margin + gx * VIEW_TILE_SIZE
-            y0 = margin + gy * VIEW_TILE_SIZE
-            x1 = x0 + VIEW_TILE_SIZE - 10
-            y1 = y0 + VIEW_TILE_SIZE - 10
-            color = self._color_for_tile(item)
-
-            rect = self.canvas.create_rectangle(
-                x0,
-                y0,
-                x1,
-                y1,
-                fill=color,
-                outline="#1e293b",
-                width=1,
-                tags=("tile", f"tile_{id(item['tile'])}"),
-            )
-
-            label = item["copy_direction"] or item["status"] or ""
-            text_color = "#ffffff" if color in {"#111827", "#ef4444"} else "#0f172a"
-            self.canvas.create_text(
-                (x0 + x1) / 2,
-                (y0 + y1) / 2,
-                text=label,
-                fill=text_color,
-                font=("Segoe UI", 10, "bold"),
-            )
-
-            self.canvas_items[rect] = item
-
+    def _refresh_header_and_details(self, snapshot):
+        summary = snapshot["summary"]
         title_text = snapshot["title"]
         status_summary = ", ".join(f"{k}: {v}" for k, v in sorted(summary["status_counts"].items())) or "None"
         self.title_label.config(text=title_text)
@@ -507,9 +525,66 @@ class TileViewer(tk.Toplevel):
                 f"Statuses: {status_summary}"
             )
         )
-
         self._set_detail(snapshot["explanation"])
-        self.fit_view()
+
+    def _render_current_snapshot(self, reset_view=False):
+        snapshot = self.snapshots[self.snapshot_index]
+        layout = snapshot["layout"]
+
+        self.canvas.delete("all")
+        self.canvas_items.clear()
+        self.item_to_rect.clear()
+        self.label_items.clear()
+        self.selected_rect = None
+        self._current_snapshot_id = id(snapshot)
+
+        if not layout:
+            self.current_layout_bounds = None
+            self._refresh_header_and_details(snapshot)
+            self._update_nav_state()
+            return
+
+        xs = [item["x"] for item in layout]
+        ys = [item["y"] for item in layout]
+        self.current_layout_bounds = (min(xs), max(xs), min(ys), max(ys))
+
+        self._refresh_header_and_details(snapshot)
+
+        if reset_view:
+            self.fit_view(redraw=False)
+        else:
+            self._set_view_from_state()
+
+        for item in layout:
+            x0, y0, x1, y1, tile_px = self._world_rect_for_item(item)
+            color = self._color_for_tile(item)
+            rect = self.canvas.create_rectangle(
+                x0,
+                y0,
+                x1,
+                y1,
+                fill=color,
+                outline="#1e293b",
+                width=1,
+                tags=("tile", f"tile_{id(item['tile'])}"),
+            )
+            self.canvas_items[rect] = item
+            self.item_to_rect[id(item["tile"])] = rect
+
+            label = item["copy_direction"] or item["status"] or ""
+            text_color = "#ffffff" if color in {"#111827", "#ef4444"} else "#0f172a"
+            font_size = max(8, min(16, int(tile_px * 0.22)))
+            text_id = self.canvas.create_text(
+                (x0 + x1) / 2,
+                (y0 + y1) / 2,
+                text=label,
+                fill=text_color,
+                font=("Segoe UI", font_size, "bold"),
+                tags=("tile_label",),
+            )
+            self.label_items.append(text_id)
+
+        self._update_label_visibility()
         self._update_nav_state()
 
     def _pretty_value(self, value, indent="  "):
@@ -535,12 +610,69 @@ class TileViewer(tk.Toplevel):
         self.detail_text.insert("1.0", text)
         self.detail_text.config(state="disabled")
 
-    def _on_canvas_click(self, event):
-        item_id = self.canvas.find_closest(self.canvas.canvasx(event.x), self.canvas.canvasy(event.y))
-        if not item_id:
+    def _tile_at_event(self, event):
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+        items = self.canvas.find_overlapping(x, y, x, y)
+        for item_id in reversed(items):
+            if item_id in self.canvas_items:
+                return item_id
+        return None
+
+    def _update_label_visibility(self):
+        visible = self.current_tile_px >= self.label_visibility_threshold
+        if visible != self._labels_visible:
+            self._labels_visible = visible
+        state = "normal" if visible else "hidden"
+        for label_id in self.label_items:
+            self.canvas.itemconfigure(label_id, state=state)
+
+    def _pan_canvas(self, dx, dy):
+        if dx == 0 and dy == 0:
             return
-        item_id = item_id[0]
-        if item_id not in self.canvas_items:
+        self.offset_x += dx
+        self.offset_y += dy
+        self.world_origin_x += dx
+        self.world_origin_y += dy
+        self.canvas.move("all", dx, dy)
+
+    def _scale_canvas(self, canvas_x, canvas_y, factor):
+        self.canvas.scale("all", canvas_x, canvas_y, factor, factor)
+        self.zoom *= factor
+        self.offset_x = canvas_x - (canvas_x - self.offset_x) * factor
+        self.offset_y = canvas_y - (canvas_y - self.offset_y) * factor
+        self.world_origin_x = canvas_x - (canvas_x - self.world_origin_x) * factor
+        self.world_origin_y = canvas_y - (canvas_y - self.world_origin_y) * factor
+        self.current_tile_px *= factor
+        self._update_label_visibility()
+
+    def _on_canvas_press(self, event):
+        self.canvas.focus_set()
+        self.dragging = False
+        self.drag_start = (event.x, event.y)
+
+    def _on_canvas_drag(self, event):
+        if self.drag_start is None:
+            return
+        dx = event.x - self.drag_start[0]
+        dy = event.y - self.drag_start[1]
+        if abs(dx) > 2 or abs(dy) > 2:
+            self.dragging = True
+        self._pan_canvas(dx, dy)
+        self.drag_start = (event.x, event.y)
+
+    def _on_canvas_release(self, event):
+        if self.drag_start is None:
+            return
+        was_dragging = self.dragging
+        self.drag_start = None
+        self.dragging = False
+        if not was_dragging:
+            self._on_canvas_click(event)
+
+    def _on_canvas_click(self, event):
+        item_id = self._tile_at_event(event)
+        if item_id is None:
             return
 
         tile_info = self.canvas_items[item_id]
@@ -575,26 +707,77 @@ class TileViewer(tk.Toplevel):
         ]
         self._set_detail("\n".join(details))
 
+    def _zoom_at(self, canvas_x, canvas_y, factor):
+        if not self.current_layout_bounds:
+            return
+        new_zoom = max(self.min_zoom, min(self.max_zoom, self.zoom * factor))
+        factor = new_zoom / self.zoom
+        if abs(factor - 1.0) < 1e-9:
+            return
+        self._scale_canvas(canvas_x, canvas_y, factor)
+
     def _on_mousewheel(self, event):
-        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        factor = 1.1 if event.delta > 0 else 1 / 1.1
+        self._zoom_at(event.x, event.y, factor)
 
     def _on_shift_mousewheel(self, event):
-        self.canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
+        factor = 1.1 if event.delta > 0 else 1 / 1.1
+        self._zoom_at(event.x, event.y, factor)
 
-    def fit_view(self):
+    def _on_keypress(self, event):
+        key = event.keysym.lower()
+        step = 30
+        if key in {"left", "a"}:
+            self._pan_canvas(step, 0)
+        elif key in {"right", "d"}:
+            self._pan_canvas(-step, 0)
+        elif key in {"up", "w"}:
+            self._pan_canvas(0, step)
+        elif key in {"down", "s"}:
+            self._pan_canvas(0, -step)
+        else:
+            return
+
+    def _on_canvas_configure(self, event):
+        size = (event.width, event.height)
+        if self.last_fit_size is None or self.last_fit_size == size:
+            return
+        if self._suspend_fit_on_resize:
+            self.last_fit_size = size
+            return
+        self.fit_view()
+
+    def fit_view(self, redraw=True):
+        if not self.current_layout_bounds:
+            return
         self.update_idletasks()
-        self.canvas.xview_moveto(0)
-        self.canvas.yview_moveto(0)
+        canvas_w = max(1, self.canvas.winfo_width())
+        canvas_h = max(1, self.canvas.winfo_height())
+        width_cells, height_cells = self._layout_dimensions()
+        usable_w = max(1, canvas_w - self.view_padding * 2)
+        usable_h = max(1, canvas_h - self.view_padding * 2)
+        fit_x = usable_w / max(1, width_cells * self.base_tile_size)
+        fit_y = usable_h / max(1, height_cells * self.base_tile_size)
+        self.zoom = max(self.min_zoom, min(self.max_zoom, min(fit_x, fit_y)))
+
+        content_w = width_cells * self.base_tile_size * self.zoom
+        content_h = height_cells * self.base_tile_size * self.zoom
+        self.offset_x = (canvas_w - content_w) / 2 - self.view_padding
+        self.offset_y = (canvas_h - content_h) / 2 - self.view_padding
+        self.last_fit_size = (canvas_w, canvas_h)
+        self._set_view_from_state()
+        if redraw:
+            self._render_current_snapshot(reset_view=False)
 
     def prev_snapshot(self):
         if self.snapshot_index > 0:
             self.snapshot_index -= 1
-            self._render_current_snapshot()
+            self._render_current_snapshot(reset_view=True)
 
     def next_snapshot(self):
         if self.snapshot_index < len(self.snapshots) - 1:
             self.snapshot_index += 1
-            self._render_current_snapshot()
+            self._render_current_snapshot(reset_view=True)
 
     def _update_nav_state(self):
         if len(self.snapshots) <= 1:
