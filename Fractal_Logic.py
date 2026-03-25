@@ -1,10 +1,7 @@
 from collections import deque
 import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
-import time
 import copy
 
-import Generate_XML as g
 import Functions as fl
 
 # Storing all transitions and affinity rules
