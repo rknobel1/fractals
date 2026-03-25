@@ -2,13 +2,6 @@ from collections import deque
 import matplotlib.pyplot as plt
 import copy
 
-import Functions as fl
-
-# Storing all transitions and affinity rules
-states = []
-transitions = []
-affinities = []
-
 # To store the tiles where hard resetting will first occur
 hard_reset_tiles = []
 
@@ -324,53 +317,26 @@ def choose_copy_direction(tile, direction):
     while len(stack) > 0:
         cur_tile = stack.pop()
 
-        # Generate transition rule -----
-        t1 = fl.generate_state(cur_tile)
-        # ------------------------------
-
         if cur_tile.next != None:
             for neighbor in cur_tile.next:
-                if retrieve_tile(cur_tile, neighbor) not in visited_tiles and retrieve_tile(cur_tile, neighbor) != None: 
+                if retrieve_tile(cur_tile, neighbor) not in visited_tiles and retrieve_tile(cur_tile, neighbor) != None:
                     adj_tile = retrieve_tile(cur_tile, neighbor)
                     stack.append(adj_tile)
 
-                    # Generate transition rule --------------------
-                    t2 = fl.generate_state(adj_tile)
-
                     copy_direction_update_tiles(cur_tile, direction)
                     copy_direction_update_tiles(adj_tile, direction)
-
-                    t1_final, t2_final = fl.generate_state(cur_tile), fl.generate_state(adj_tile)
-
-                    if neighbor == 'N': transitions.append([t2, t1, t2_final, t1_final, 'V'])
-                    elif neighbor == 'E': transitions.append([t1, t2, t1_final, t2_final, 'H'])
-                    elif neighbor == 'W': transitions.append([t2, t1, t2_final, t1_final, 'H'])
-                    elif neighbor == 'S': transitions.append([t1, t2, t1_final, t2_final, 'V'])
-                    t1 = t1_final
-                    # ----------------------------------------------
 
         if cur_tile.previous != None:
             for neighbor in cur_tile.previous:
-                if retrieve_tile(cur_tile, neighbor) not in visited_tiles and retrieve_tile(cur_tile, neighbor) != None: 
+                if retrieve_tile(cur_tile, neighbor) not in visited_tiles and retrieve_tile(cur_tile, neighbor) != None:
                     adj_tile = retrieve_tile(cur_tile, neighbor)
                     stack.append(adj_tile)
-
-                    # Generate transition rule ---------------------
-                    t2 = fl.generate_state(adj_tile)
 
                     copy_direction_update_tiles(cur_tile, direction)
                     copy_direction_update_tiles(adj_tile, direction)
 
-                    t1_final, t2_final = fl.generate_state(cur_tile), fl.generate_state(adj_tile)
-
-                    if neighbor == 'N': transitions.append([t2, t1, t2_final, t1_final, 'V'])
-                    elif neighbor == 'E': transitions.append([t1, t2, t1_final, t2_final, 'H'])
-                    elif neighbor == 'W': transitions.append([t2, t1, t2_final, t1_final, 'H'])
-                    elif neighbor == 'S': transitions.append([t1, t2, t1_final, t2_final, 'V'])
-                    t1 = t1_final
-                    # ----------------------------------------------
-
-        if cur_tile.terminal: t.append(cur_tile)
+        if cur_tile.terminal:
+            t.append(cur_tile)
 
         visited_tiles.append(cur_tile)
 
@@ -378,85 +344,38 @@ def choose_copy_direction(tile, direction):
     while len(t) > 0:
         cur_tile = t.pop()
 
-        # Generate transition rule ----
-        t1 = fl.generate_state(cur_tile)
-        # -----------------------------
-
-        if cur_tile.next != None: 
+        if cur_tile.next != None:
             for neighbor in cur_tile.next:
                 if len(retrieve_tile(cur_tile, neighbor).copy_direction) > 1:
                     adj_tile = retrieve_tile(cur_tile, neighbor)
 
-                    # Generate transitions:
-                    t2 = fl.generate_state(adj_tile)
-                    # ---------------------
-
                     l = list(adj_tile.copy_direction)
 
                     l[1] = int(l[1]) - 1
 
-                    if l[1] == 0: 
+                    if l[1] == 0:
                         adj_tile.copy_direction = l[0]
                         t.append(adj_tile)
-
-                        # Generate transitions -------------------
-                        t2_final = fl.generate_state(adj_tile)
-
-                        if neighbor == 'N': transitions.append([t2, t1, t2_final, t1, 'V'])
-                        elif neighbor == 'E': transitions.append([t1, t2, t1, t2_final, 'H'])
-                        elif neighbor == 'W': transitions.append([t2, t1, t2_final, t1, 'H'])
-                        elif neighbor == 'S': transitions.append([t1, t2, t1, t2_final, 'V'])
-                        # ----------------------------------------
-                    else: 
+                    else:
                         l[1] = str(l[1])
                         adj_tile.copy_direction = "".join(l)
-
-                        # Generate transitions ------------------
-                        t2_final = fl.generate_state(adj_tile)
-
-                        if neighbor == 'N': transitions.append([t2, t1, t2_final, t1, 'V'])
-                        elif neighbor == 'E': transitions.append([t1, t2, t1, t2_final, 'H'])
-                        elif neighbor == 'W': transitions.append([t2, t1, t2_final, t1, 'H'])
-                        elif neighbor == 'S': transitions.append([t1, t2, t1, t2_final, 'V'])
-                        # ----------------------------------------
                         break
 
-        if cur_tile.previous != None: 
+        if cur_tile.previous != None:
             for neighbor in cur_tile.previous:
                 if len(retrieve_tile(cur_tile, neighbor).copy_direction) > 1:
                     adj_tile = retrieve_tile(cur_tile, neighbor)
 
-                    # Generate transitions
-                    t2 = fl.generate_state(adj_tile)
-                    # --------------------
-
                     l = list(adj_tile.copy_direction)
 
                     l[1] = int(l[1]) - 1
 
-                    if l[1] == 0: 
+                    if l[1] == 0:
                         adj_tile.copy_direction = l[0]
                         t.append(adj_tile)
-
-                        # Generate transitions ---------------------------------------------------
-                        t2_final = fl.generate_state(adj_tile)
-
-                        if neighbor == 'N': transitions.append([t2, t1, t2_final, t1, 'V'])
-                        elif neighbor == 'E': transitions.append([t1, t2, t1, t2_final, 'H'])
-                        elif neighbor == 'W': transitions.append([t2, t1, t2_final, t1, 'H'])
-                        elif neighbor == 'S': transitions.append([t1, t2, t1, t2_final, 'V'])
-                        # -------------------------------------------------------------------------
-                    else: 
+                    else:
                         l[1] = str(l[1])
                         adj_tile.copy_direction = "".join(l)
-
-                        # Generate transitions ----------------------------------------------------
-                        t2_final = fl.generate_state(adj_tile)
-                        if neighbor == 'N': transitions.append([t2, t1, t2_final, t1, 'V'])
-                        elif neighbor == 'E': transitions.append([t1, t2, t1, t2_final, 'H'])
-                        elif neighbor == 'W': transitions.append([t2, t1, t2_final, t1, 'H'])
-                        elif neighbor == 'S': transitions.append([t1, t2, t1, t2_final, 'V'])
-                        # -------------------------------------------------------------------------
                         break
 
     return
@@ -3171,12 +3090,6 @@ def run_simulation(seed_tile, stage, snapshot_cb=None):
         current_stage += 1
         emit_snapshot(f"Completed stage {current_stage - 1}")
 
-    for [s1, s2, s1_final, s2_final, _] in transitions:
-        if s1 not in states: states.append(s1)
-        if s2 not in states: states.append(s2)
-        if s1_final not in states: states.append(s1_final)
-        if s2_final not in states: states.append(s2_final)
-
     emit_snapshot("Final assembly")
 
-    return [seed_tile, states, transitions, affinities, original_seed_tile]
+    return [seed_tile, original_seed_tile]

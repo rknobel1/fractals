@@ -849,7 +849,6 @@ class TileViewer(tk.Toplevel):
         summary = snapshot["summary"]
         reason = snapshot.get("reason") or "Tile state changed"
         idx = len(self.snapshots) + 1
-        counts = snapshot.get("rule_counts") or {}
         self.snapshots.append(
             {
                 "title": f"Step {idx}",
@@ -861,7 +860,6 @@ class TileViewer(tk.Toplevel):
                     f"{snapshot['title']}\n"
                     f"{reason}\n"
                     f"Current tiles: {summary['tile_count']}\n"
-                    f"Accumulated rules in this run: {counts.get('states', 0)} states, {counts.get('transitions', 0)} transitions, {counts.get('affinities', 0)} affinities.\n"
                     f"Added this step: {diff['added']}\n"
                     f"Changed this step: {diff['changed']}\n"
                     f"Removed this step: {diff['removed']}"
@@ -970,7 +968,8 @@ class MainApp(tk.Tk):
         try:
             if self.run_mode.get() == "pure":
                 seed_for_run = sim.clone_seed(base_seed)
-                seed_tile, states, transitions, affinities, _ = sim.run_simulation_clean(seed_for_run, self.stages)
+                result = sim.run_simulation_clean(seed_for_run, self.stages)
+                seed_tile = result[0] if isinstance(result, (list, tuple)) else result
                 layout = sim.extract_tile_layout(seed_tile)
                 summary = sim.summarize_layout(layout)
                 snapshots = [
@@ -980,7 +979,6 @@ class MainApp(tk.Tk):
                         "summary": summary,
                         "explanation": (
                             f"Simulation completed to stage {self.stages}.\n"
-                            f"Rules generated: {len(states)} states, {len(transitions)} transitions, {len(affinities)} affinities.\n"
                             f"This is the final assembly view."
                         ),
                     }
@@ -1005,14 +1003,12 @@ class MainApp(tk.Tk):
                             "layout": layout,
                             "summary": sim.summarize_layout(layout),
                             "reason": f"Initial state. Auto-running up to stage {max_stage} (actual stage value {actual_stage}).",
-                            "rule_counts": {"states": 0, "transitions": 0, "affinities": 0},
                         }
                     )
 
                 viewer_snapshots = []
                 for snap in initial_snapshots:
                     annotated_layout, diff = _annotate_layout_diff(viewer_snapshots[-1]["raw_layout"] if viewer_snapshots else None, snap["layout"])
-                    counts = snap.get("rule_counts") or {}
                     viewer_snapshots.append(
                         {
                             "title": f"Step {len(viewer_snapshots) + 1}",
@@ -1025,8 +1021,7 @@ class MainApp(tk.Tk):
                                 f"{snap.get('reason') or 'Tile state changed'}\n"
                                 f"Auto-running up to stage {max_stage} (actual stage value {actual_stage}).\n"
                                 f"Current tiles: {snap['summary']['tile_count']}\n"
-                                f"Accumulated rules in this run: {counts.get('states', 0)} states, {counts.get('transitions', 0)} transitions, {counts.get('affinities', 0)} affinities.\n"
-                                f"Added this step: {diff['added']}\n"
+                                            f"Added this step: {diff['added']}\n"
                                 f"Changed this step: {diff['changed']}\n"
                                 f"Removed this step: {diff['removed']}"
                             ),

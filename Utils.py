@@ -8,9 +8,6 @@ import Fractal_Logic as fl
 
 def reset_simulation_globals():
     """Clear module-level rule/state accumulators before a fresh run."""
-    fl.states.clear()
-    fl.transitions.clear()
-    fl.affinities.clear()
     fl.hard_reset_tiles.clear()
     fl.set_tile_change_hook(None)
 
@@ -146,11 +143,6 @@ class LayoutSnapshotRecorder:
             "layout": layout,
             "summary": summary,
             "reason": reason,
-            "rule_counts": {
-                "states": len(fl.states),
-                "transitions": len(fl.transitions),
-                "affinities": len(fl.affinities),
-            },
         }
         self.snapshots.append(snapshot)
         return snapshot
@@ -212,11 +204,6 @@ class StepSimulationSession:
             self.queue.put({
                 "type": "done",
                 "result": self.result,
-                "rule_counts": {
-                    "states": len(fl.states),
-                    "transitions": len(fl.transitions),
-                    "affinities": len(fl.affinities),
-                },
             })
         except Exception as exc:
             self.error = exc
