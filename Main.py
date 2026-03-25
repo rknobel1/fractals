@@ -561,12 +561,9 @@ class TileViewer(tk.Toplevel):
                 "• Black = original seed\n"
                 "• Dark gray = pseudo seed\n\n"
                 "Tiles:\n"
-                "• Dark orange = wall\n"
                 "• Dark red = terminal\n"
-                "• Gray = neutral tile\n\n"
+                "• Light gray = neutral tile\n\n"
                 "Statuses:\n"
-                "• Light blue = choosing copy direction\n"
-                "• Dark blue = ready to copy\n"
                 "• Yellow = transmitting signal\n"
                 "• Red = producing\n"
                 "• Green = produced\n\n"
@@ -596,12 +593,7 @@ class TileViewer(tk.Toplevel):
         if item.get("original_seed"):
             return "#000000"  
         if item.get("pseudo_seed"):
-            return "#374151"    
-
-        if status == "C":
-            return "#60a5fa" 
-        if status == "R":
-            return "#1e3a8a"  
+            return "#374151"      
         
         if status == "P":
             return "#ef4444"  
