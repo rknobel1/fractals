@@ -521,33 +521,48 @@ class TileViewer(tk.Toplevel):
             font=("Segoe UI", 9),
             text=(
                 "Legend\n"
+                "Seeds:\n"
                 "• Black = original seed\n"
-                "• Gold = pseudo seed\n"
-                "• Red = wall\n"
-                "• Green = active/copied status\n"
+                "• Dark gray = pseudo seed\n\n"
+                "Tiles:\n"
+                "• Dark orange = wall\n"
+                "• Dark red = terminal\n"
                 "• Gray = neutral tile\n\n"
-                "Step mode here is stage-by-stage.\n"
-                "It does not yet expose every internal\n"
-                "transition inside run_simulation()."
+                "Statuses:\n"
+                "• Light blue = choosing copy direction\n"
+                "• Dark blue = ready to copy\n"
+                "• Yellow = transmitting signal\n"
+                "• Red = producing\n"
+                "• Green = produced\n\n"
             ),
         )
         legend.grid(row=2, column=0, sticky="ew", padx=8, pady=8)
 
     def _color_for_tile(self, item):
-        if item.get("change_type") == "added":
-            return "#3b82f6"
-        if item.get("change_type") == "changed":
-            return "#a855f7"
-        if item["original_seed"]:
-            return "#111827"
-        if item["pseudo_seed"]:
-            return "#f59e0b"
-        if item["wall"]:
-            return "#ef4444"
-        if item["status"] in {"P", "W", "M", "C", "R", "Y"}:
-            return "#22c55e"
-        if item["terminal"]:
-            return "#cbd5e1"
+        if item.get("original_seed"):
+            return "#000000"  
+        if item.get("pseudo_seed"):
+            return "#374151"  
+
+        if item.get("wall"):
+            return "#c2410c"  
+
+        status = item.get("status")
+
+        if status == "C":
+            return "#60a5fa" 
+        if status == "R":
+            return "#1e3a8a"  
+        if status in {"M", "W"}:
+            return "#facc15" 
+        if status == "P":
+            return "#ef4444"  
+        if status == "Y":
+            return "#22c55e"  
+
+        if item.get("terminal"):
+            return "#7f1d1d"  
+
         return "#94a3b8"
 
     def _layout_dimensions(self):
@@ -1056,7 +1071,7 @@ class DrawSeedFrame(tk.Frame):
 
         tk.Label(
             self.header,
-            text="Left click to place tiles. Right click to delete. Then choose the origin tile and the run mode.",
+            text="Left click to place tiles. Right click on a tile to remove it.",
             font=("Segoe UI", 10),
             bg="#ffffff",
             fg="#475569",
@@ -1179,7 +1194,7 @@ class SelectStagesFrame(tk.Frame):
 
         self.subtitle_label = tk.Label(
             card,
-            text="Higher stages can grow very quickly. Step mode now records from the initial seed and advances one tile-state change at a time.",
+            text="Select up to what stage to grow the fractal.",
             font=("Segoe UI", 10),
             bg="#ffffff",
             fg="#475569",
@@ -1225,7 +1240,7 @@ class SelectStagesFrame(tk.Frame):
 
         self.title_label.config(text="Choose the simulation depth")
         self.subtitle_label.config(
-            text="Higher stages can grow very quickly. Step mode now records from the initial seed and advances one tile-state change at a time."
+            text="Higher stages can grow very quickly."
         )
 
         options = []
