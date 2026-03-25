@@ -283,6 +283,61 @@ def create_seed(tile_positions, origin_tile_cords):
 
 
 # ----------------------------
+# Snapshot helpers
+# ----------------------------
+def _layout_signature_item(item):
+    return (
+        item["x"],
+        item["y"],
+        item["status"],
+        item["copy_direction"],
+        tuple(item["caps"] or ()),
+        tuple(item["next"] or ()),
+        tuple(item["previous"] or ()),
+        tuple(item["breadcrumbs"].items()) if isinstance(item.get("breadcrumbs"), dict) else item.get("breadcrumbs"),
+        tuple(item["key_tiles"].items()) if isinstance(item.get("key_tiles"), dict) else item.get("key_tiles"),
+        item["original_seed"],
+        item["pseudo_seed"],
+        item["wall"],
+        item["terminal"],
+    )
+
+
+def _annotate_layout_diff(prev_layout, curr_layout):
+    prev_map = {(item["x"], item["y"]): item for item in (prev_layout or [])}
+    curr_map = {(item["x"], item["y"]): item for item in (curr_layout or [])}
+
+    annotated = []
+    added = 0
+    changed = 0
+    unchanged = 0
+
+    for pos, item in curr_map.items():
+        prev_item = prev_map.get(pos)
+        item = dict(item)
+
+        if prev_item is None:
+            item["change_type"] = "added"
+            added += 1
+        elif _layout_signature_item(prev_item) != _layout_signature_item(item):
+            item["change_type"] = "changed"
+            changed += 1
+        else:
+            item["change_type"] = "unchanged"
+            unchanged += 1
+
+        annotated.append(item)
+
+    diff = {
+        "added": added,
+        "changed": changed,
+        "removed": len(set(prev_map) - set(curr_map)),
+        "unchanged": unchanged,
+    }
+    return annotated, diff
+
+
+# ----------------------------
 # Result viewer
 # ----------------------------
 
@@ -295,7 +350,7 @@ class TileViewer(tk.Toplevel):
         self.configure(bg="#f4f6fb")
 
         self.snapshots = snapshots
-        self.snapshot_index = len(snapshots) - 1
+        self.snapshot_index = 0
         self.mode_name = mode_name
         self.canvas_items = {}
         self.item_to_rect = {}
@@ -474,6 +529,10 @@ class TileViewer(tk.Toplevel):
         legend.grid(row=2, column=0, sticky="ew", padx=8, pady=8)
 
     def _color_for_tile(self, item):
+        if item.get("change_type") == "added":
+            return "#3b82f6"
+        if item.get("change_type") == "changed":
+            return "#a855f7"
         if item["original_seed"]:
             return "#111827"
         if item["pseudo_seed"]:
@@ -558,14 +617,23 @@ class TileViewer(tk.Toplevel):
         for item in layout:
             x0, y0, x1, y1, tile_px = self._world_rect_for_item(item)
             color = self._color_for_tile(item)
+            outline = "#1e293b"
+            width = 1
+            if item.get("change_type") == "added":
+                outline = "#1d4ed8"
+                width = 3
+            elif item.get("change_type") == "changed":
+                outline = "#7e22ce"
+                width = 3
+
             rect = self.canvas.create_rectangle(
                 x0,
                 y0,
                 x1,
                 y1,
                 fill=color,
-                outline="#1e293b",
-                width=1,
+                outline=outline,
+                width=width,
                 tags=("tile", f"tile_{id(item['tile'])}"),
             )
             self.canvas_items[rect] = item
@@ -683,6 +751,7 @@ class TileViewer(tk.Toplevel):
 
         details = [
             f"Grid position: ({tile_info['x']}, {tile_info['y']})",
+            f"Change type: {tile_info.get('change_type', 'n/a')}",
             f"Status: {tile_info['status']}",
             f"Copy direction: {tile_info['copy_direction']}",
             f"Original seed: {tile_info['original_seed']}",
@@ -848,25 +917,62 @@ class MainApp(tk.Tk):
                 ]
                 TileViewer(self, "Simulation Result", snapshots, mode_name="Pure")
             else:
-                snapshots = []
-                for stage_idx in range(1, self.stages + 1):
-                    stage_seed = sim.clone_seed(base_seed)
-                    seed_tile, states, transitions, affinities, _ = sim.run_simulation_clean(stage_seed, stage_idx)
+                seed_for_run = sim.clone_seed(base_seed)
+                raw_snapshots = []
+
+                def capture_snapshot(seed_tile, label):
                     layout = sim.extract_tile_layout(seed_tile)
                     summary = sim.summarize_layout(layout)
-                    snapshots.append(
+                    raw_snapshots.append(
                         {
-                            "title": f"Step mode — stage {stage_idx} of {self.stages}",
+                            "title": label,
                             "layout": layout,
                             "summary": summary,
+                        }
+                    )
+
+                seed_tile, states, transitions, affinities, _ = sim.run_simulation_clean(
+                    seed_for_run,
+                    self.stages,
+                    snapshot_cb=capture_snapshot,
+                )
+
+                if not raw_snapshots:
+                    layout = sim.extract_tile_layout(seed_tile)
+                    summary = sim.summarize_layout(layout)
+                    raw_snapshots.append(
+                        {
+                            "title": "Final assembly",
+                            "layout": layout,
+                            "summary": summary,
+                        }
+                    )
+
+                snapshots = []
+                prev_layout = None
+                total_steps = len(raw_snapshots)
+
+                for idx, snap in enumerate(raw_snapshots, start=1):
+                    annotated_layout, diff = _annotate_layout_diff(prev_layout, snap["layout"])
+                    summary = snap["summary"]
+                    snapshots.append(
+                        {
+                            "title": f"Step {idx} of {total_steps}",
+                            "layout": annotated_layout,
+                            "summary": summary,
+                            "diff": diff,
                             "explanation": (
-                                f"This snapshot shows the assembly after stage {stage_idx}.\n"
+                                f"{snap['title']}\n"
                                 f"Current tiles: {summary['tile_count']}\n"
-                                f"Accumulated rules in this run: {len(states)} states, {len(transitions)} transitions, {len(affinities)} affinities.\n\n"
-                                f"Note: this step mode is stage-by-stage rather than every internal transition inside run_simulation()."
+                                f"Accumulated rules in this run: {len(states)} states, {len(transitions)} transitions, {len(affinities)} affinities.\n"
+                                f"Added this step: {diff['added']}\n"
+                                f"Changed this step: {diff['changed']}\n"
+                                f"Removed this step: {diff['removed']}"
                             ),
                         }
                     )
+                    prev_layout = snap["layout"]
+
                 TileViewer(self, "Step Viewer", snapshots, mode_name="Step")
         except Exception as exc:
             tk.messagebox.showerror("Simulation error", str(exc))

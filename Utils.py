@@ -1,21 +1,21 @@
-from Fractal_Logic import *
+import Fractal_Logic as fl
 import copy as _copy
 from collections import deque as _deque
 
 
 def reset_simulation_globals():
     """Clear module-level rule/state accumulators before a fresh run."""
-    states.clear()
-    transitions.clear()
-    affinities.clear()
-    hard_reset_tiles.clear()
+    fl.states.clear()
+    fl.transitions.clear()
+    fl.affinities.clear()
+    fl.hard_reset_tiles.clear()
 
 
 
-def run_simulation_clean(seed_tile, stage):
+def run_simulation_clean(seed_tile, stage, snapshot_cb=None):
     """Run a clean simulation without leaking previous global state."""
     reset_simulation_globals()
-    return run_simulation(seed_tile, stage)
+    return fl.run_simulation(seed_tile, stage, snapshot_cb=snapshot_cb)
 
 
 
@@ -62,29 +62,15 @@ def extract_tile_layout(seed_tile):
             }
         )
 
-        if tile.next is not None:
-            for direction in tile.next:
-                neighbor = retrieve_tile(tile, direction)
-                if direction == "N":
-                    stack.append((neighbor, x, y + 1))
-                elif direction == "E":
-                    stack.append((neighbor, x + 1, y))
-                elif direction == "W":
-                    stack.append((neighbor, x - 1, y))
-                elif direction == "S":
-                    stack.append((neighbor, x, y - 1))
-
-        if tile.previous is not None:
-            for direction in tile.previous:
-                neighbor = retrieve_tile(tile, direction)
-                if direction == "N":
-                    stack.append((neighbor, x, y + 1))
-                elif direction == "E":
-                    stack.append((neighbor, x + 1, y))
-                elif direction == "W":
-                    stack.append((neighbor, x - 1, y))
-                elif direction == "S":
-                    stack.append((neighbor, x, y - 1))
+        # Traverse real physical neighbors, not just logical next/previous
+        if tile.tile_to_N is not None:
+            stack.append((tile.tile_to_N, x, y + 1))
+        if tile.tile_to_E is not None:
+            stack.append((tile.tile_to_E, x + 1, y))
+        if tile.tile_to_W is not None:
+            stack.append((tile.tile_to_W, x - 1, y))
+        if tile.tile_to_S is not None:
+            stack.append((tile.tile_to_S, x, y - 1))
 
     return tiles
 
