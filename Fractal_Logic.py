@@ -1,85 +1,194 @@
 from collections import deque
-import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
-import time
 import copy
-
-import Generate_XML as g
-import Functions as fl
-
-# Storing all transitions and affinity rules
-states = []
-transitions = []
-affinities = []
 
 # To store the tiles where hard resetting will first occur
 hard_reset_tiles = []
 
+_TILE_CHANGE_HOOK = None
+_OBSERVED_LIST_ATTRS = {"caps", "next", "previous", "new_n", "new_p"}
+
+
+def set_tile_change_hook(hook):
+    global _TILE_CHANGE_HOOK
+    _TILE_CHANGE_HOOK = hook
+
+
+def _tracking_enabled():
+    return _TILE_CHANGE_HOOK is not None
+
+
+def _emit_tile_change(tile, attr_name):
+    if _TILE_CHANGE_HOOK is not None:
+        _TILE_CHANGE_HOOK(tile, attr_name)
+
+
+class ObservableList(list):
+    def __init__(self, iterable=(), owner=None, attr_name=None):
+        super().__init__(iterable)
+        self._owner = owner
+        self._attr_name = attr_name
+
+    def _notify(self):
+        if self._owner is not None and self._attr_name is not None:
+            _emit_tile_change(self._owner, self._attr_name)
+
+    def append(self, value):
+        super().append(value)
+        self._notify()
+
+    def extend(self, values):
+        super().extend(values)
+        self._notify()
+
+    def insert(self, index, value):
+        super().insert(index, value)
+        self._notify()
+
+    def remove(self, value):
+        super().remove(value)
+        self._notify()
+
+    def pop(self, index=-1):
+        value = super().pop(index)
+        self._notify()
+        return value
+
+    def clear(self):
+        super().clear()
+        self._notify()
+
+    def __setitem__(self, index, value):
+        super().__setitem__(index, value)
+        self._notify()
+
+    def __delitem__(self, index):
+        super().__delitem__(index)
+        self._notify()
+
+
+def _wrap_observable_list(owner, attr_name, value):
+    if value is None or not _tracking_enabled():
+        return value
+    if isinstance(value, ObservableList):
+        wrapped = ObservableList(value, owner=owner, attr_name=attr_name)
+        return wrapped
+    if isinstance(value, list):
+        return ObservableList(value, owner=owner, attr_name=attr_name)
+    return value
+
+
+def instrument_tile_graph(seed_tile):
+    """Wrap mutable list fields for an existing tile graph when step tracking is enabled."""
+    if seed_tile is None or not _tracking_enabled():
+        return
+
+    stack = deque([seed_tile])
+    visited = set()
+    while stack:
+        tile = stack.pop()
+        if tile is None or id(tile) in visited:
+            continue
+        visited.add(id(tile))
+
+        object.__setattr__(tile, '_suspend_notifications', True)
+        try:
+            for attr_name in _OBSERVED_LIST_ATTRS:
+                value = getattr(tile, attr_name, None)
+                if isinstance(value, list) and not isinstance(value, ObservableList):
+                    object.__setattr__(tile, attr_name, ObservableList(value, owner=tile, attr_name=attr_name))
+        finally:
+            object.__setattr__(tile, '_suspend_notifications', False)
+
+        for neighbor in ('tile_to_N', 'tile_to_E', 'tile_to_W', 'tile_to_S'):
+            stack.append(getattr(tile, neighbor, None))
+
+
 class Tile():
 
     def __init__(self, p, n):
+        object.__setattr__(self, "_suspend_notifications", True)
+
         self.previous = p
         self.next = n
 
-    # What direction to copy
-    copy_direction = None
+        # What direction to copy
+        self.copy_direction = None
 
-    # Caps
-    caps = []
+        # Caps
+        self.caps = []
 
-    # Local tile information (and neighbors)
-    status = None
-    tile_to_N = None
-    tile_to_E = None
-    tile_to_W = None
-    tile_to_S = None
+        # Local tile information (and neighbors)
+        self.status = None
+        self.tile_to_N = None
+        self.tile_to_E = None
+        self.tile_to_W = None
+        self.tile_to_S = None
 
-    # If tile becomes new key tile or not
-    new_kt_N = False
-    new_kt_E = False
-    new_kt_W = False
-    new_kt_S = False
+        # If tile becomes new key tile or not
+        self.new_kt_N = False
+        self.new_kt_E = False
+        self.new_kt_W = False
+        self.new_kt_S = False
 
-    # Breadcrumb trail
-    N = None
-    E = None
-    W = None
-    S = None
+        # Breadcrumb trail
+        self.N = None
+        self.E = None
+        self.W = None
+        self.S = None
 
-    # Holds information from breadcrumb trail (what the state was before)
-    temp = None
+        # Holds information from breadcrumb trail (what the state was before)
+        self.temp = None
 
-    # What is being transferred
-    transfer = None
+        # What is being transferred
+        self.transfer = None
 
-    # If tile is a seed 
-    original_seed = False
-    pseudo_seed = False
+        # If tile is a seed
+        self.original_seed = False
+        self.pseudo_seed = False
 
-    # If tile is on edge of sub-assembly
-    wall = False
+        # If tile is on edge of sub-assembly
+        self.wall = False
 
-    # Direction to key tile
-    key_tile_N = None
-    key_tile_E = None
-    key_tile_W = None
-    key_tile_S = None
+        # Direction to key tile
+        self.key_tile_N = None
+        self.key_tile_E = None
+        self.key_tile_W = None
+        self.key_tile_S = None
 
-    # Has assembly been copied for tile
-    copied = False
+        # Has assembly been copied for tile
+        self.copied = False
 
-    # Is tile terminal
-    terminal = False
+        # Is tile terminal
+        self.terminal = False
 
-    # For seeds, number of times subassembly has been copied
-    num_times_copied = 0
+        # For seeds, number of times subassembly has been copied
+        self.num_times_copied = 0
 
-    # The new previous and next for tile
-    new_p = None
-    new_n = None
+        # The new previous and next for tile
+        self.new_p = None
+        self.new_n = None
 
-    # If first tile copied
-    first_tile = False
+        # If first tile copied
+        self.first_tile = False
+
+        object.__setattr__(self, "_suspend_notifications", False)
+
+    def __setattr__(self, name, value):
+        # Fast path: when step tracking is disabled, behave like a normal object.
+        if not _tracking_enabled():
+            object.__setattr__(self, name, value)
+            return
+
+        if name in _OBSERVED_LIST_ATTRS:
+            value = _wrap_observable_list(self, name, value)
+
+        object.__setattr__(self, name, value)
+
+        if name.startswith("_"):
+            return
+
+        if not getattr(self, "_suspend_notifications", False):
+            _emit_tile_change(self, name)
 
 # RETURNS: opp(d) i.e if N -> S
 def opp(d):
@@ -127,50 +236,6 @@ def is_assembly_finished(tile):
     
     return True
 
-# Plot assembly onto graph (each tile is a mark)
-def plot_graph(seed_tile): 
-    x, y = [], []
-    stack = deque()
-    stack.append([seed_tile, 0, 0])
-    num_tiles = 0
-
-    print("PRINTING -----------------------")
-
-    while len(stack) > 0:
-        cur_tile = stack.pop()
-
-        # Debug
-        # print("Printing:", cur_tile[0].next, cur_tile[0].previous, cur_tile[0].N, cur_tile[0].E, cur_tile[0].W, cur_tile[0].S, "Keytiles:", cur_tile[0].key_tile_N, cur_tile[0].key_tile_E, cur_tile[0].key_tile_W, cur_tile[0].key_tile_S, cur_tile[0].copy_direction)
-        # time.sleep(1)
-        x.append(cur_tile[1])
-        y.append(cur_tile[2])
-
-        if cur_tile[0] == None: continue
-        num_tiles += 1
-        if cur_tile[0].next == None:
-            continue
-
-        for neighbor in cur_tile[0].next:
-            if (neighbor == "N"):
-                stack.append([cur_tile[0].tile_to_N, cur_tile[1], cur_tile[2]+1])
-            if (neighbor == "E"):
-                stack.append([cur_tile[0].tile_to_E, cur_tile[1]+1, cur_tile[2]])
-            if (neighbor == "W"):
-                stack.append([cur_tile[0].tile_to_W, cur_tile[1]-1, cur_tile[2]])
-            if (neighbor == "S"):
-                stack.append([cur_tile[0].tile_to_S, cur_tile[1], cur_tile[2]-1])
-
-    if (max(x) - min(x)) > (max(y) - min(y)): l, r = min(x)-1, max(x) + 1
-    else: l, r = min(x)-1, max(x) + 1
-
-    print("Number of tiles: ", num_tiles)
-    plt.xticks([])
-    plt.yticks([])
-    plt.plot(x, y, "x")
-    plt.title('Result')
-    plt.show()
-    return 
-
 def copy_direction_update_tiles(cur_tile, direction):
     c = 0
     if cur_tile.next != None: c += len(cur_tile.next)
@@ -207,53 +272,26 @@ def choose_copy_direction(tile, direction):
     while len(stack) > 0:
         cur_tile = stack.pop()
 
-        # Generate transition rule -----
-        t1 = fl.generate_state(cur_tile)
-        # ------------------------------
-
         if cur_tile.next != None:
             for neighbor in cur_tile.next:
-                if retrieve_tile(cur_tile, neighbor) not in visited_tiles and retrieve_tile(cur_tile, neighbor) != None: 
+                if retrieve_tile(cur_tile, neighbor) not in visited_tiles and retrieve_tile(cur_tile, neighbor) != None:
                     adj_tile = retrieve_tile(cur_tile, neighbor)
                     stack.append(adj_tile)
 
-                    # Generate transition rule --------------------
-                    t2 = fl.generate_state(adj_tile)
-
                     copy_direction_update_tiles(cur_tile, direction)
                     copy_direction_update_tiles(adj_tile, direction)
-
-                    t1_final, t2_final = fl.generate_state(cur_tile), fl.generate_state(adj_tile)
-
-                    if neighbor == 'N': transitions.append([t2, t1, t2_final, t1_final, 'V'])
-                    elif neighbor == 'E': transitions.append([t1, t2, t1_final, t2_final, 'H'])
-                    elif neighbor == 'W': transitions.append([t2, t1, t2_final, t1_final, 'H'])
-                    elif neighbor == 'S': transitions.append([t1, t2, t1_final, t2_final, 'V'])
-                    t1 = t1_final
-                    # ----------------------------------------------
 
         if cur_tile.previous != None:
             for neighbor in cur_tile.previous:
-                if retrieve_tile(cur_tile, neighbor) not in visited_tiles and retrieve_tile(cur_tile, neighbor) != None: 
+                if retrieve_tile(cur_tile, neighbor) not in visited_tiles and retrieve_tile(cur_tile, neighbor) != None:
                     adj_tile = retrieve_tile(cur_tile, neighbor)
                     stack.append(adj_tile)
-
-                    # Generate transition rule ---------------------
-                    t2 = fl.generate_state(adj_tile)
 
                     copy_direction_update_tiles(cur_tile, direction)
                     copy_direction_update_tiles(adj_tile, direction)
 
-                    t1_final, t2_final = fl.generate_state(cur_tile), fl.generate_state(adj_tile)
-
-                    if neighbor == 'N': transitions.append([t2, t1, t2_final, t1_final, 'V'])
-                    elif neighbor == 'E': transitions.append([t1, t2, t1_final, t2_final, 'H'])
-                    elif neighbor == 'W': transitions.append([t2, t1, t2_final, t1_final, 'H'])
-                    elif neighbor == 'S': transitions.append([t1, t2, t1_final, t2_final, 'V'])
-                    t1 = t1_final
-                    # ----------------------------------------------
-
-        if cur_tile.terminal: t.append(cur_tile)
+        if cur_tile.terminal:
+            t.append(cur_tile)
 
         visited_tiles.append(cur_tile)
 
@@ -261,299 +299,41 @@ def choose_copy_direction(tile, direction):
     while len(t) > 0:
         cur_tile = t.pop()
 
-        # Generate transition rule ----
-        t1 = fl.generate_state(cur_tile)
-        # -----------------------------
-
-        if cur_tile.next != None: 
+        if cur_tile.next != None:
             for neighbor in cur_tile.next:
                 if len(retrieve_tile(cur_tile, neighbor).copy_direction) > 1:
                     adj_tile = retrieve_tile(cur_tile, neighbor)
 
-                    # Generate transitions:
-                    t2 = fl.generate_state(adj_tile)
-                    # ---------------------
-
                     l = list(adj_tile.copy_direction)
 
                     l[1] = int(l[1]) - 1
 
-                    if l[1] == 0: 
+                    if l[1] == 0:
                         adj_tile.copy_direction = l[0]
                         t.append(adj_tile)
-
-                        # Generate transitions -------------------
-                        t2_final = fl.generate_state(adj_tile)
-
-                        if neighbor == 'N': transitions.append([t2, t1, t2_final, t1, 'V'])
-                        elif neighbor == 'E': transitions.append([t1, t2, t1, t2_final, 'H'])
-                        elif neighbor == 'W': transitions.append([t2, t1, t2_final, t1, 'H'])
-                        elif neighbor == 'S': transitions.append([t1, t2, t1, t2_final, 'V'])
-                        # ----------------------------------------
-                    else: 
+                    else:
                         l[1] = str(l[1])
                         adj_tile.copy_direction = "".join(l)
-
-                        # Generate transitions ------------------
-                        t2_final = fl.generate_state(adj_tile)
-
-                        if neighbor == 'N': transitions.append([t2, t1, t2_final, t1, 'V'])
-                        elif neighbor == 'E': transitions.append([t1, t2, t1, t2_final, 'H'])
-                        elif neighbor == 'W': transitions.append([t2, t1, t2_final, t1, 'H'])
-                        elif neighbor == 'S': transitions.append([t1, t2, t1, t2_final, 'V'])
-                        # ----------------------------------------
                         break
 
-        if cur_tile.previous != None: 
+        if cur_tile.previous != None:
             for neighbor in cur_tile.previous:
                 if len(retrieve_tile(cur_tile, neighbor).copy_direction) > 1:
                     adj_tile = retrieve_tile(cur_tile, neighbor)
 
-                    # Generate transitions
-                    t2 = fl.generate_state(adj_tile)
-                    # --------------------
-
                     l = list(adj_tile.copy_direction)
 
                     l[1] = int(l[1]) - 1
 
-                    if l[1] == 0: 
+                    if l[1] == 0:
                         adj_tile.copy_direction = l[0]
                         t.append(adj_tile)
-
-                        # Generate transitions ---------------------------------------------------
-                        t2_final = fl.generate_state(adj_tile)
-
-                        if neighbor == 'N': transitions.append([t2, t1, t2_final, t1, 'V'])
-                        elif neighbor == 'E': transitions.append([t1, t2, t1, t2_final, 'H'])
-                        elif neighbor == 'W': transitions.append([t2, t1, t2_final, t1, 'H'])
-                        elif neighbor == 'S': transitions.append([t1, t2, t1, t2_final, 'V'])
-                        # -------------------------------------------------------------------------
-                    else: 
+                    else:
                         l[1] = str(l[1])
                         adj_tile.copy_direction = "".join(l)
-
-                        # Generate transitions ----------------------------------------------------
-                        t2_final = fl.generate_state(adj_tile)
-                        if neighbor == 'N': transitions.append([t2, t1, t2_final, t1, 'V'])
-                        elif neighbor == 'E': transitions.append([t1, t2, t1, t2_final, 'H'])
-                        elif neighbor == 'W': transitions.append([t2, t1, t2_final, t1, 'H'])
-                        elif neighbor == 'S': transitions.append([t1, t2, t1, t2_final, 'V'])
-                        # -------------------------------------------------------------------------
                         break
 
     return
-
-# Reset assembly that was copied
-# def reset_assembly(tile):
-#     stack = deque()
-#     stack.append(tile)
-#     visited_tiles = []
-
-#     while len(stack) > 0:
-#         cur_tile = stack.pop()
-#         cur_tile.copy_direction = None
-#         cur_tile.status = 'P'
-#         cur_tile.caps = []
-
-#         if cur_tile.N != None and cur_tile.key_tile_N != None: cur_tile.N = 'N'
-#         else: cur_tile.N = None
-#         if cur_tile.E != None and cur_tile.key_tile_E != None: cur_tile.E = 'N'
-#         else: cur_tile.E = None
-#         if cur_tile.W != None and cur_tile.key_tile_W != None: cur_tile.W = 'N'
-#         else: cur_tile.W = None
-#         if cur_tile.S != None and cur_tile.key_tile_S != None: cur_tile.S = 'N'
-#         else: cur_tile.S = None
-    
-#         if cur_tile.next != None:
-#             for neighbor in cur_tile.next:
-#                 if retrieve_tile(cur_tile, neighbor) not in visited_tiles: stack.append(retrieve_tile(cur_tile, neighbor))
-
-#         if cur_tile.previous != None:
-#             for neighbor in cur_tile.previous:
-#                 if retrieve_tile(cur_tile, neighbor) not in visited_tiles: stack.append(retrieve_tile(cur_tile, neighbor))
-
-#         visited_tiles.append(cur_tile)
-
-#     return
-
-# Reset stage
-# def reset_stage(tile):
-#     stack = deque()
-#     stack.append(tile)
-
-#     while len(stack) > 0:
-#         cur_tile = stack.pop()
-
-#         cur_tile.copy_direction = None
-#         cur_tile.status = None
-#         cur_tile.wall = False
-#         cur_tile.pseudo_seed = False
-#         cur_tile.caps = []
-#         cur_tile.copied = False
-
-#         if cur_tile.tile_to_N != None: cur_tile.N = 'N'
-#         if cur_tile.tile_to_E != None: cur_tile.E = 'N'
-#         if cur_tile.tile_to_W != None: cur_tile.W = 'N'
-#         if cur_tile.tile_to_S != None: cur_tile.S = 'N'
-
-#         # Fix any missing 'previous' and 'next'
-#         if not cur_tile.original_seed:
-
-#             if cur_tile.tile_to_N != None and (cur_tile.next == None or 'N' not in cur_tile.next) and (cur_tile.previous == None or cur_tile.previous[0] != 'N'): 
-#                 if cur_tile.next == None: cur_tile.next = ['N']
-#                 else: cur_tile.next.append('N')
-                
-#                 retrieve_tile(cur_tile, 'N').previous = ['S']
-
-#             if cur_tile.tile_to_E != None and (cur_tile.next == None or 'E' not in cur_tile.next) and (cur_tile.previous == None or cur_tile.previous[0] != 'E'): 
-#                 if cur_tile.next == None: cur_tile.next = ['E']
-#                 else: cur_tile.next.append('E')
-                
-#                 retrieve_tile(cur_tile, 'E').previous = ['W']
-
-#             if cur_tile.tile_to_W != None and (cur_tile.next == None or 'W' not in cur_tile.next) and (cur_tile.previous == None or cur_tile.previous[0] != 'W'): 
-#                 if cur_tile.next == None: cur_tile.next = ['W']
-#                 else: cur_tile.next.append('W')
-                
-#                 retrieve_tile(cur_tile, 'W').previous = ['E']
-
-#             if cur_tile.tile_to_S != None and (cur_tile.next == None or 'S' not in cur_tile.next) and (cur_tile.previous == None or cur_tile.previous[0] != 'S'): 
-#                 if cur_tile.next == None: cur_tile.next = ['S']
-#                 else: cur_tile.next.append('S')
-                
-#                 retrieve_tile(cur_tile, 'S').previous = ['N']
-
-#         # Update terminal
-#         total = 0
-#         if cur_tile.next != None: total += len(cur_tile.next)
-#         if cur_tile.previous != None: total += len(cur_tile.previous)
-#         if total == 1: cur_tile.terminal = True
-#         else: cur_tile.terminal = False
-        
-
-#         if cur_tile.next != None:
-#             for neighbor in cur_tile.next:
-#                 stack.append(retrieve_tile(cur_tile, neighbor))
-
-#     return
-
-# Reset direction to keytile
-# def reset_keytile_directions(tile):
-
-#     kt_N, kt_E, kt_W, kt_S = None, None, None, None
-
-#     # Locate the correct key tile locations
-#     stack = deque()
-#     stack.append(tile)
-#     while len(stack) > 0: 
-#         cur_tile = stack.pop()
-
-#         if cur_tile.key_tile_N == None and cur_tile.new_kt_N: kt_N = cur_tile
-#         if cur_tile.key_tile_E == None and cur_tile.new_kt_E: kt_E = cur_tile
-#         if cur_tile.key_tile_W == None and cur_tile.new_kt_W: kt_W = cur_tile
-#         if cur_tile.key_tile_S == None and cur_tile.new_kt_S: kt_S = cur_tile
-        
-#         if cur_tile.next != None: 
-#             for n in cur_tile.next: 
-#                 stack.append(retrieve_tile(cur_tile, n))
-
-#     # Reset the system
-#     # North
-#     visited_tiles = []
-#     stack = deque()
-#     stack.append(kt_N)
-#     while len(stack) > 0:
-#         cur_tile = stack.pop()
-#         visited_tiles.append(cur_tile)
-
-#         if cur_tile.next != None:
-#             for n in cur_tile.next: 
-#                 adj_tile = retrieve_tile(cur_tile, n)
-#                 if adj_tile not in visited_tiles:
-#                     adj_tile.key_tile_N = [opp(n)]
-#                     stack.append(adj_tile)
-
-#         if cur_tile.previous != None:
-#             for n in cur_tile.previous: 
-#                 adj_tile = retrieve_tile(cur_tile, n)
-#                 if adj_tile not in visited_tiles:
-#                     adj_tile.key_tile_N = [opp(n)]
-#                     stack.append(adj_tile)
-
-#         cur_tile.new_kt_N = False
-
-#     # East
-#     visited_tiles = []
-#     stack = deque()
-#     stack.append(kt_E)
-#     while len(stack) > 0:
-#         cur_tile = stack.pop()
-#         visited_tiles.append(cur_tile)
-
-#         if cur_tile.next != None:
-#             for n in cur_tile.next: 
-#                 adj_tile = retrieve_tile(cur_tile, n)
-#                 if adj_tile not in visited_tiles:
-#                     adj_tile.key_tile_E = [opp(n)]
-#                     stack.append(adj_tile)
-
-#         if cur_tile.previous != None:
-#             for n in cur_tile.previous: 
-#                 adj_tile = retrieve_tile(cur_tile, n)
-#                 if adj_tile not in visited_tiles:
-#                     adj_tile.key_tile_E = [opp(n)]
-#                     stack.append(adj_tile)
-
-#         cur_tile.new_kt_E = False
-
-#     # West
-#     visited_tiles = []
-#     stack = deque()
-#     stack.append(kt_W)
-#     while len(stack) > 0:
-#         cur_tile = stack.pop()
-#         visited_tiles.append(cur_tile)
-
-#         if cur_tile.next != None:
-#             for n in cur_tile.next: 
-#                 adj_tile = retrieve_tile(cur_tile, n)
-#                 if adj_tile not in visited_tiles:
-#                     adj_tile.key_tile_W = [opp(n)]
-#                     stack.append(adj_tile)
-
-#         if cur_tile.previous != None:
-#             for n in cur_tile.previous: 
-#                 adj_tile = retrieve_tile(cur_tile, n)
-#                 if adj_tile not in visited_tiles:
-#                     adj_tile.key_tile_W = [opp(n)]
-#                     stack.append(adj_tile)
-
-#         cur_tile.new_kt_W = False
-
-#     # South
-#     visited_tiles = []
-#     stack = deque()
-#     stack.append(kt_S)
-#     while len(stack) > 0:
-#         cur_tile = stack.pop()
-#         visited_tiles.append(cur_tile)
-
-#         if cur_tile.next != None:
-#             for n in cur_tile.next: 
-#                 adj_tile = retrieve_tile(cur_tile, n)
-#                 if adj_tile not in visited_tiles:
-#                     adj_tile.key_tile_S = [opp(n)]
-#                     stack.append(adj_tile)
-
-#         if cur_tile.previous != None:
-#             for n in cur_tile.previous: 
-#                 adj_tile = retrieve_tile(cur_tile, n)
-#                 if adj_tile not in visited_tiles:
-#                     adj_tile.key_tile_S = [opp(n)]
-#                     stack.append(adj_tile)
-
-#         cur_tile.new_kt_S = False
 
 # Updates prev/next if tile is missing
 def update_prev_next(ct):
@@ -593,32 +373,20 @@ def hard_reset():
     while len(hard_reset_tiles) > 0:
 
         ct = hard_reset_tiles.pop()
-        # print()
-        # print("Tile from stack: ", ct.next, ct.previous, ct.key_tile_N, ct.key_tile_E, ct.key_tile_W, ct.key_tile_S, ct.copy_direction)
         update_prev_next(ct)
-
-        # print("Updated: ", ct.next, ct.previous, ct.key_tile_N, ct.key_tile_E, ct.key_tile_W, ct.key_tile_S, ct.copy_direction)
-        # print()
-
-        # if ct.previous != None: 
 
         # Retrieve adjacent tile
         adj_tile = retrieve_tile(ct, ct.previous[0])
         update_prev_next(adj_tile)
 
-        # print("Current BEFORE: ", ct.next, ct.previous, ct.key_tile_N, ct.key_tile_E, ct.key_tile_W, ct.key_tile_S, ct.copy_direction)
-        # print("--- Adj BEFORE:", adj_tile.next, adj_tile.previous, adj_tile.key_tile_N, adj_tile.key_tile_E, adj_tile.key_tile_W, adj_tile.key_tile_S, adj_tile.copy_direction)
-
         # Start by first spreading hard reset if not yet done
         if adj_tile.copy_direction == 'r': 
-            # print("RESET: ", adj_tile.next, adj_tile.previous)
             adj_tile.copy_direction = 'R?'
             t = [adj_tile]
             update_prev_next(adj_tile)
 
             while len(t) > 0:
                 cur = t.pop()
-                # print("-------- resetting tile:", cur.next, cur.previous)
 
                 if cur.next != None: 
                     for neighbor in cur.next:
@@ -795,9 +563,6 @@ def hard_reset():
             else: 
                 l[1] = str(l[1])
                 adj_tile.copy_direction = "".join(l) 
-
-        # print("Current: ", ct.next, ct.previous, ct.key_tile_N, ct.key_tile_E, ct.key_tile_W, ct.key_tile_S, ct.copy_direction)
-        # print("--- Adj:", adj_tile.next, adj_tile.previous, adj_tile.key_tile_N, adj_tile.key_tile_E, adj_tile.key_tile_W, adj_tile.key_tile_S, adj_tile.copy_direction)
 
 # RETURNS: bool for whether caps on tile should be moved
 def move_caps(tile): 
@@ -1208,7 +973,6 @@ def copy_tile(tile, d, ps):
                 prev_tile.caps.append(opp(breadcrumb_direction))
                 tile.caps = []
 
-            # print(tile.next, tile.previous, tile.caps)
             if len(tile.caps) == num_dirs(tile) and tile.key_tile_S == None and retrieve_tile(tile, breadcrumb_direction).copy_direction == d:
 
                 # Find pseudo seed
@@ -3042,7 +2806,6 @@ def copy_assembly(tile, d):
     starting_tile.first_tile = True
     while not is_assembly_finished(starting_tile):
         # copy tile
-        # print("------------------- copying tile: ", tile.next, tile.previous)
         is_pseudo_seed = copy_tile(tile, d, pseudo_seed)
 
         if is_pseudo_seed != None: 
@@ -3134,15 +2897,10 @@ def copy_assembly(tile, d):
             tile.N = 'Y'
             
         else: 
-            # print("Broke:", tile.next, tile.previous)
             break
-
-
-        # print('new tile to copy: ', tile.next, tile.previous)
 
     r_tile = None
     # Need to find pseudo seed to copy in new direction: 
-    # print("Checking: ", tile.next, tile.previous, starting_tile.next, starting_tile.previous)
     if tile == starting_tile:
         tile.copy_direction = '?'
         t = [tile]
@@ -3224,63 +2982,58 @@ def copy_assembly(tile, d):
                 ct.key_tile_S = '*'
                 ct.copy_direction = 'r'
 
-    # reset_assembly(starting_tile)
-    # if returned_pseudo_seed != None:
-    #     reset_assembly(returned_pseudo_seed)
-
     return returned_pseudo_seed
 
 
 # Run simulation -----------------------------------------------------------------------------------
-def run_simulation(seed_tile, stage):
+def run_simulation(seed_tile, stage, snapshot_cb=None):
     original_seed_tile = copy.deepcopy(seed_tile)
 
+    def emit_snapshot(label):
+        if snapshot_cb is not None:
+            snapshot_cb(seed_tile, label)
+
+    emit_snapshot("Initial seed")
+
     current_stage = 1
-    # dir = []
     while current_stage < stage:
-        # print()
-        # print("STARTING STAGE: ", current_stage)
 
         stack = deque()
         stack.append(seed_tile)
         while len(stack) > 0:
             cur_tile = stack.pop()
-            if cur_tile.next != None: 
+            if cur_tile.next != None:
                 for neighbor in cur_tile.next:
                     if retrieve_tile(cur_tile, neighbor).copied == False:
-                        # print("D: ", neighbor)
-                        # dir.append(neighbor)
                         choose_copy_direction(cur_tile, neighbor)
+                        emit_snapshot(f"Stage {current_stage}: chose copy direction {neighbor}")
+
                         new_pseudo_seed = copy_assembly(cur_tile, neighbor)
+                        emit_snapshot(f"Stage {current_stage}: copied assembly toward {neighbor}")
 
-                        if new_pseudo_seed != None: stack.append(new_pseudo_seed)
+                        if new_pseudo_seed != None:
+                            stack.append(new_pseudo_seed)
+                            emit_snapshot(f"Stage {current_stage}: queued new pseudo seed from {neighbor}")
 
-            if cur_tile.previous != None: 
+            if cur_tile.previous != None:
                 if retrieve_tile(cur_tile, cur_tile.previous[0]).copied == False:
-                    # print("D: ", cur_tile.previous[0])
-                    # dir.append(neighbor)
-                    choose_copy_direction(cur_tile, cur_tile.previous[0])
-                    new_pseudo_seed = copy_assembly(cur_tile, cur_tile.previous[0])
+                    direction = cur_tile.previous[0]
+                    choose_copy_direction(cur_tile, direction)
+                    emit_snapshot(f"Stage {current_stage}: chose copy direction {direction}")
 
-                    if new_pseudo_seed != None: stack.append(new_pseudo_seed)
+                    new_pseudo_seed = copy_assembly(cur_tile, direction)
+                    emit_snapshot(f"Stage {current_stage}: copied assembly toward {direction}")
+
+                    if new_pseudo_seed != None:
+                        stack.append(new_pseudo_seed)
+                        emit_snapshot(f"Stage {current_stage}: queued new pseudo seed from {direction}")
 
         hard_reset()
+        emit_snapshot(f"Stage {current_stage}: completed hard reset")
 
-        # print(len(dir))
-        # print(dir)
-        # At end of stage
-        # reset_stage(seed_tile)
-        # reset_keytile_directions(seed_tile)
         current_stage += 1
+        emit_snapshot(f"Completed stage {current_stage - 1}")
 
-    for [s1, s2, s1_final, s2_final, _] in transitions:
-        if s1 not in states: states.append(s1)
-        if s2 not in states: states.append(s2)
-        if s1_final not in states: states.append(s1_final)
-        if s2_final not in states: states.append(s2_final)
+    emit_snapshot("Final assembly")
 
-    # print(states)
-    # print(transitions)
-    # print(affinities)
-
-    return [seed_tile, states, transitions, affinities, original_seed_tile]
+    return [seed_tile, original_seed_tile]
