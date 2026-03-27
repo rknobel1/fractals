@@ -13,6 +13,9 @@ TILE_SIZE = 30
 # Tile size used in the result viewer
 VIEW_TILE_SIZE = 64
 
+# Max number of tiles allowed for simulation
+MAX_SIM_SIZE = 30000
+
 
 # ----------------------------
 # Seed helpers
@@ -455,7 +458,7 @@ class TileViewer(tk.Toplevel):
         self.speed_spin = tk.Spinbox(
             controls,
             from_=0.25,
-            to=20.0,
+            to=25.0,
             increment=0.25,
             textvariable=self.play_speed_var,
             width=6,
@@ -993,7 +996,7 @@ class TileViewer(tk.Toplevel):
         except (tk.TclError, ValueError):
             speed = 2.0
 
-        speed = max(0.25, speed)
+        speed = max(0.25, min(25.0, speed))
         delay_ms = max(1, int(1000 / speed))
 
         self._play_job = self.after(delay_ms, self._playback_tick)
@@ -1378,7 +1381,7 @@ class SelectStagesFrame(tk.Frame):
         stage = 1
         actual_stage = 1
 
-        while num_tiles < 30000:
+        while num_tiles < MAX_SIM_SIZE:
             options.append(f"{stage} - (stage: {actual_stage})")
             num_tiles *= num_tiles
             stage += 1
