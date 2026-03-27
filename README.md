@@ -23,15 +23,14 @@ python Main.py
 ```
 
 Paint a fractal seed using left click to place tiles and right click to delete tiles.
-![image](https://github.com/user-attachments/assets/2edb09d7-0ff5-4291-9b6f-c4ab30459f55)
+![image](https://github.com/user-attachments/assets/d33933e1-72f1-4a98-b2c5-658a391fe7f3)
+
 Press done to continue to the next step.
-Left click a tile to set it as the origin.
-![image](https://github.com/user-attachments/assets/9b7fa562-f3b4-4e50-99dc-67a8fe3cf0a8)
+Left click a tile to set it as the origin tile.
+![image](https://github.com/user-attachments/assets/ab98e83d-424c-467d-be26-be7a627739de)
+
 Select the number of stages to emulate.
-> Note: I am currently improving efficiency to allow for larger simulations.
+![image](https://github.com/user-attachments/assets/fd7a687a-d3cf-451b-845c-0f6ea890d61a)
 
-![image](https://github.com/user-attachments/assets/f39e7e7f-9f8f-4746-a836-ded3dfb6555c)
-![image](https://github.com/user-attachments/assets/d626bcc5-841c-4992-b73b-91fd29a0c735)
-
-
-
+Click run to display the result
+![image](https://github.com/user-attachments/assets/6bc81afd-f1f3-4872-aeb1-a38959d90c36)
