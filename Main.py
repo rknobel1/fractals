@@ -1274,7 +1274,7 @@ class ChooseOriginFrame(tk.Frame):
 
         bottom = tk.Frame(self, bg="#f4f6fb")
         bottom.pack(fill="x", padx=16, pady=(0, 16))
-        tk.Button(bottom, text="Back", command=lambda: self.controller.show_frame(DrawSeedFrame), width=12).pack(side="left")
+        tk.Button(bottom, text="Back", command=self.go_back, width=12).pack(side="left")
         tk.Button(bottom, text="Done", command=self.go_to_stages, width=12).pack(side="right")
 
     def refresh(self):
@@ -1299,6 +1299,15 @@ class ChooseOriginFrame(tk.Frame):
     def go_to_stages(self):
         if self.controller.origin_tile is not None:
             self.controller.show_frame(SelectStagesFrame)
+
+    def go_back(self):
+        updated = {}
+        for cord, (_, x, y, _) in self.controller.tile_positions.items():
+            updated[cord] = (None, x, y, 0)
+
+        self.controller.tile_positions = updated
+        self.controller.origin_tile = None
+        self.controller.show_frame(DrawSeedFrame)
 
 
 class SelectStagesFrame(tk.Frame):
